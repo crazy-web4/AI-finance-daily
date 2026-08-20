@@ -400,31 +400,19 @@ class NewsCollector:
 
             print(f"     Tavily 新增: {tavily_count} 篇", flush=True)
 
-        # 3. 时效性过滤（优先保留近24小时内容）
+        # 3. 时效性过滤（架构评审 #2：确定性规则）
+        #    - 有发布时间且早于 cutoff 的 → 丢弃（明确旧闻）
+        #    - 近期 / 无发布时间的 → 保留
         from datetime import timedelta
-        recent = []
-        older = []
         cutoff = datetime.now(timezone.utc) - timedelta(hours=max_age_hours)
-        for art in articles:
-            # 有明确发布时间的，按时间判断
-            if art.published_at:
-                if art.published_at >= cutoff:
-                    recent.append(art)
-                else:
-                    older.append(art)
-            # 没有发布时间的，先归到 recent（搜索引擎返回的通常是新内容）
-            else:
-                recent.append(art)
-
-        print(f"  ⏰ 时效过滤: {len(recent)} 篇近期 / {len(older)} 篇较旧", flush=True)
-
-        # 如果近期内容足够多，只保留近期的
-        min_recent_ratio = 0.9
-        if len(recent) >= len(articles) * min_recent_ratio:
-            articles = recent
-        else:
-            # 近期不够的话，按出现次数和可靠性排序，保留较新的
-            articles = recent + older[:max(0, int(len(recent) * 0.1))]
+        dated_recent = [a for a in articles if a.published_at and a.published_at >= cutoff]
+        dated_older = [a for a in articles if a.published_at and a.published_at < cutoff]
+        undated = [a for a in articles if not a.published_at]
+        articles = dated_recent + undated
+        print(
+            f"  ⏰ 时效过滤: 近期 {len(dated_recent)} / 无时间 {len(undated)} / 丢弃旧闻 {len(dated_older)}",
+            flush=True,
+        )
 
         # 4. 去重
         if dedup:

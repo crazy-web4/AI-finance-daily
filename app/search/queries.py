@@ -51,7 +51,8 @@ def _add_time_qualifier(query: str, category: str | None = None) -> str:
     if category in ('funding',):
         return f"{query} {month_en} latest"
     elif category in ('policy',):
-        return f"{query} {year} update"
+        # 查询词已含 update 时只追加年份，避免 "update 2026 update" 重复
+        return f"{query} {year}" if "update" in q_lower else f"{query} {year} update"
     elif category in ('research',):
         return f"{query} {year}"
     else:

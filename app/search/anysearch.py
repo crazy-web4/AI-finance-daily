@@ -15,7 +15,7 @@ from __future__ import annotations
 import hashlib
 import os
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 from urllib.parse import urlparse
 
@@ -146,12 +146,121 @@ def _parse_search_results(md_text: str, query_origin: str | None = None) -> tupl
             url=url,
             source_domain=source_domain,
             snippet=snippet,
+            published_at=_extract_published_date(url, title + " " + snippet),
             fetched_at=now,
             query_origin=query_origin,
         )
         results.append(result)
 
     return total_found, results
+
+
+_MONTHS = {
+    "jan": 1, "feb": 2, "mar": 3, "apr": 4, "may": 5, "jun": 6,
+    "jul": 7, "aug": 8, "sep": 9, "oct": 10, "nov": 11, "dec": 12,
+}
+
+
+def _parse_flexible_date(value) -> datetime | None:
+    """宽松解析日期（ISO / 'Aug 17, 2026' / 纯日期串），失败返回 None。"""
+    if not value or not isinstance(value, str):
+        return None
+    v = value.strip()
+    for fmt in ("%Y-%m-%dT%H:%M:%S%z", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M:%S", "%Y-%m-%d"):
+        try:
+            return datetime.strptime(v, fmt)
+        except ValueError:
+            continue
+    m = re.match(r"^([A-Za-z]{3,9})\.?\s+(\d{1,2}),?\s+(20\d{2})$", v)
+    if m:
+        mon = _MONTHS.get(m.group(1)[:3].lower())
+        if mon:
+            try:
+                return datetime(int(m.group(3)), mon, int(m.group(2)))
+            except ValueError:
+                return None
+    return None
+
+
+def _extract_published_date(url: str, text: str) -> datetime | None:
+    """
+    多信号估算发布时间（架构评审 #2）。
+    优先级: URL 中的日期 > 文本中最近的合法日期。
+    仅接受 [now-400d, now+1d] 范围内的日期，避免误抓正文里的历史年份。
+    """
+    now = datetime.now(timezone.utc)
+    lo, hi = now - timedelta(days=400), now + timedelta(days=1)
+
+    def valid(dt: datetime | None) -> datetime | None:
+        if dt is None:
+            return None
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt if lo <= dt <= hi else None
+
+    # 1) URL 日期: /2026-08-17/  /2026/08/17/  /20260817/
+    m = re.search(r"/(20\d{2})[-/](\d{1,2})[-/](\d{1,2})", url)
+    if m:
+        dt = valid(_safe_date(*map(int, m.groups())))
+        if dt:
+            return dt
+    m = re.search(r"/(20\d{2})(\d{2})(\d{2})(?:/|$)", url)
+    if m:
+        dt = valid(_safe_date(*map(int, m.groups())))
+        if dt:
+            return dt
+
+    # 2) 文本日期，取最近的合法值
+    candidates: list[datetime] = []
+    for m in re.finditer(r"(20\d{2})-(\d{1,2})-(\d{1,2})", text):
+        dt = _safe_date(*map(int, m.groups()))
+        if dt:
+            candidates.append(dt)
+    for m in re.finditer(r"([A-Za-z]{3,9})\.?\s+(\d{1,2}),?\s+(20\d{2})", text):
+        mon = _MONTHS.get(m.group(1)[:3].lower())
+        if mon:
+            dt = _safe_date(int(m.group(3)), mon, int(m.group(2)))
+            if dt:
+                candidates.append(dt)
+    for m in re.finditer(r"(20\d{2})年(\d{1,2})月(\d{1,2})日", text):
+        dt = _safe_date(*map(int, m.groups()))
+        if dt:
+            candidates.append(dt)
+
+    best = None
+    for dt in sorted(candidates, reverse=True):
+        v = valid(dt)
+        if v:
+            best = v
+            break
+    if best:
+        return best
+
+    # 3) 月级日期仅作为"明显旧"信号：超过 35 天才返回（将被时效过滤丢弃），
+    #    当月/近期月份返回 None（保留），避免误杀标题含当月的时新内容
+    month_candidates: list[datetime] = []
+    for m in re.finditer(r"(20\d{2})年(\d{1,2})月(?!\d)", text):
+        dt = _safe_date(int(m.group(1)), int(m.group(2)), 1)
+        if dt:
+            month_candidates.append(dt)
+    for m in re.finditer(r"\b(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+(20\d{2})\b", text):
+        mon = _MONTHS.get(m.group(1)[:3].lower())
+        if mon:
+            dt = _safe_date(int(m.group(2)), mon, 1)
+            if dt:
+                month_candidates.append(dt)
+    stale_cut = now.replace(tzinfo=None) - timedelta(days=35)
+    for dt in sorted(month_candidates, reverse=True):
+        if dt < stale_cut:
+            return dt.replace(tzinfo=timezone.utc)
+    return None
+
+
+def _safe_date(y: int, m: int, d: int) -> datetime | None:
+    try:
+        return datetime(y, m, d)
+    except ValueError:
+        return None
 
 
 def _clean_snippet(snippet: str, title: str) -> str:
@@ -510,7 +619,7 @@ class TavilyClient:
                 url=url,
                 source_domain=domain,
                 snippet=snippet,
-                published_at=None,
+                published_at=_parse_flexible_date(r.get("published_date")),
                 fetched_at=now,
                 score=score,
                 query_origin=query,

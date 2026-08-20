@@ -14,6 +14,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from app.agents.base import LLMClient
+from app.utils.timeutil import report_day_start, report_now, report_today
 from app.pipeline.collector import RawNewsArticle
 from app.pipeline.cluster import build_article_map
 from app.schemas.models import (
@@ -301,7 +302,7 @@ class ChiefEditorAgent:
 
     def finalize(self, analyzed_results, report_date=None, article_map=None):
         if not report_date:
-            report_date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+            report_date = report_today()
 
         # 按分类分组
         by_category = {}
@@ -381,8 +382,8 @@ class ChiefEditorAgent:
         return DailyReport(
             report_id=f"daily_{report_date.replace('-', '')}",
             report_date=report_date,
-            time_window_start=datetime.fromisoformat(f"{report_date}T00:00:00+00:00"),
-            time_window_end=datetime.now(timezone.utc),
+            time_window_start=report_day_start(report_date),
+            time_window_end=report_now(),
             total_items=total_items,
             total_word_count=total_words,
             editor_summary=editor_summary,
