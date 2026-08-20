@@ -42,6 +42,8 @@ class LLMClient:
             api_key=self.api_key,
             base_url=self.base_url,
         )
+        # 架构评审 #16: 调用统计，供运行报告使用
+        self.stats = {"calls": 0, "completion_chars": 0}
 
     def chat_json(
         self,
@@ -67,6 +69,8 @@ class LLMClient:
                     response_format={"type": "json_object"},
                 )
                 text = resp.choices[0].message.content or "{}"
+                self.stats["calls"] += 1
+                self.stats["completion_chars"] += len(text)
                 data = _extract_json(text)
                 return response_model.model_validate(data)
 
@@ -90,7 +94,10 @@ class LLMClient:
             ],
             temperature=temperature,
         )
-        return resp.choices[0].message.content or ""
+        text = resp.choices[0].message.content or ""
+        self.stats["calls"] += 1
+        self.stats["completion_chars"] += len(text)
+        return text
 
 
 def _extract_json(text: str) -> dict[str, Any]:

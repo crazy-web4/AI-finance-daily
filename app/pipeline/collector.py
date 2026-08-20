@@ -322,6 +322,7 @@ class NewsCollector:
             self.tavily = None
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
+        self.last_stats: dict = {}
 
     async def collect(
         self,
@@ -339,6 +340,24 @@ class NewsCollector:
 
         # 1. AnySearch 批量搜索
         batch_resp = await self.client.search_batch(queries, batch_id=batch_id)
+
+        # 架构评审 #15/#16: 搜索层告警与统计
+        self.last_stats = {
+            "engine": "anysearch",
+            "total_queries": batch_resp.total_queries,
+            "success_queries": batch_resp.success_queries,
+            "failed_queries": batch_resp.failed_queries,
+            "unique_results": batch_resp.unique_results,
+        }
+        if batch_resp.total_queries > 0 and batch_resp.success_queries == 0:
+            raise RuntimeError(
+                f"AnySearch 全部 {batch_resp.total_queries} 条查询失败（疑似 key 失效/网络故障），终止采集"
+            )
+        if batch_resp.failed_queries:
+            print(
+                f"  ⚠️ AnySearch 失败 {batch_resp.failed_queries}/{batch_resp.total_queries} 条查询",
+                flush=True,
+            )
 
         # 2. 归一化 AnySearch 结果
         articles: list[RawNewsArticle] = []

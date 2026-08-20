@@ -64,7 +64,7 @@ def _extract_json(text: str) -> dict[str, Any]:
 # 上下文构造
 # ═══════════════════════════════════════════════════════
 
-def _build_event_context(event, article_map) -> str:
+def _build_event_context(event, article_map, fulltexts=None) -> str:
     lines = []
     lines.append(f"## 事件：{event.canonical_title}")
     lines.append(f"涉及公司：{', '.join(event.companies_mentioned) if event.companies_mentioned else '未知'}")
@@ -81,6 +81,14 @@ def _build_event_context(event, article_map) -> str:
         lines.append(f"URL: {art.url}")
         lines.append(f"摘要: {art.snippet[:400]}")
         lines.append("")
+
+    # 架构评审 #7: 原文全文（截取）优先于摘要
+    if fulltexts:
+        lines.append("### 原文全文（截取，可信度高于摘要）：")
+        for ft in fulltexts[:2]:
+            lines.append(f"--- [{ft['domain']}] {ft['url']} ---")
+            lines.append(ft["fulltext"][:3000])
+            lines.append("")
     return "\n".join(lines)
 
 
@@ -137,7 +145,7 @@ ANALYST_PROMPT = """你是一名AI行业财经日报的资深分析师兼编辑�
 - 【数据优先】能用数字表达的就用数字，自然融入摘要中
 - 【客观】不要"重磅""震惊"等情绪化词汇
 - 【摘要分级】根据重要性分数决定摘要详略（见上面summary要求）
-- 【关键数据】只列真正重要的3-5个，宁缺毋滥
+- 【关键数据】只列真正重要的3-5个，宁缺毋滥；数值必须能在提供的原文/摘要中字面找到，找不到就不要列
 - 【来源】填上3-5个来源媒体名称
 
 要求:
@@ -154,8 +162,8 @@ class AnalystAgent:
     def __init__(self, llm=None):
         self.llm = llm or LLMClient()
 
-    def analyze_event(self, event, article_map):
-        context = _build_event_context(event, article_map)
+    def analyze_event(self, event, article_map, fulltexts=None):
+        context = _build_event_context(event, article_map, fulltexts)
         user_prompt = f"请分析以下AI新闻事件，输出JSON。\n\n{context}"
         try:
             resp = self.llm.chat_text(
@@ -171,21 +179,23 @@ class AnalystAgent:
             print(f"  ⚠️  分析失败 [{event.canonical_title[:40]}]: {e}", flush=True)
             return None
 
-    async def analyze_event_async(self, event, article_map, semaphore):
+    async def analyze_event_async(self, event, article_map, semaphore, fulltexts_map=None):
         async with semaphore:
             loop = asyncio.get_event_loop()
+            fts = (fulltexts_map or {}).get(event.event_id)
             result = await loop.run_in_executor(
-                None, self.analyze_event, event, article_map
+                None, self.analyze_event, event, article_map, fts
             )
             return (event, result) if result else None
 
-    async def analyze_batch_async(self, events, article_map, max_events=None, concurrency=3):
+    async def analyze_batch_async(self, events, article_map, max_events=None, concurrency=3, fulltexts_map=None):
         target = events[:max_events] if max_events else events
-        print(f"\n  🧪 Analyst Agent — {len(target)} 个事件（并发{concurrency}）", flush=True)
+        n_ft = sum(1 for e in target if (fulltexts_map or {}).get(e.event_id))
+        print(f"\n  🧪 Analyst Agent — {len(target)} 个事件（并发{concurrency}，{n_ft} 个含原文全文）", flush=True)
 
         semaphore = asyncio.Semaphore(concurrency)
         tasks = [
-            self.analyze_event_async(e, article_map, semaphore)
+            self.analyze_event_async(e, article_map, semaphore, fulltexts_map)
             for e in target
         ]
 

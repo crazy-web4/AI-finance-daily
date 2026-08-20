@@ -16,9 +16,12 @@
 - **智能去重聚类**：URL 归一化去重 + 标题相似度（bigram Jaccard）去重 + 事件聚类，多篇报道归并为一个事件
 - **跨天事件记忆**：近 3 天已报道事件自动过滤，同一新闻不会连续多天上报
 - **发布时间估算**：URL 日期 + 中英文snippet日期多信号估算，24h 时效过滤真实生效
+- **原文全文增强**：入选事件自动提取 Top 文章原文（AnySearch extract），分析不再只靠摘要
+- **两道事实核查**：key_data 数值确定性溯源（无来源即剔除）+ 高分条目(≥85) LLM 二次复核，问题记入 quality_flags
 - **LLM 分析编辑**：每个事件由 Analyst Agent 完成分类、重要性打分、中文标题撰写、详情写作、关键数据提取；Chief Editor 完成栏目组织、头条遴选、导读撰写
 - **杂志级 PDF 排版**：Jinja2 模板 + Playwright(Chromium) 渲染，含封面、目录、六大栏目、水印
 - **全链路可恢复**：采集结果、聚类结果、日报 JSON 均落盘，任意阶段可断点续跑
+- **可观测**：每次运行落盘 run report（阶段耗时/查询成功率/LLM 统计/质量告警）；24 个单元测试覆盖解析器、去重、聚类、选稿等核心逻辑
 
 ---
 
@@ -76,10 +79,14 @@ AI财经日报/
 │   │   ├── cluster.py           # 事件聚类器
 │   │   └── backfill.py          # 空栏目补全（近7天补充搜索）
 │   ├── agents/
-│   │   ├── base.py              # LLMClient（OpenAI兼容）+ BaseAgent + JSON提取
-│   │   └── pipeline.py          # AnalystAgent + ChiefEditorAgent（V1）
+│   │   ├── base.py              # LLMClient（OpenAI兼容）+ BaseAgent + JSON提取 + 调用统计
+│   │   ├── pipeline.py          # AnalystAgent + ChiefEditorAgent（V1）
+│   │   └── factcheck.py         # 事实核查：key_data 确定性溯源 + 高分 LLM 复核
 │   ├── schemas/
 │   │   └── models.py            # 全部 Pydantic 数据模型（L1~L8）
+│   ├── utils/
+│   │   ├── timeutil.py          # 报告时区（REPORT_TIMEZONE）
+│   │   └── runlog.py            # 运行报告（run_{ts}.json）
 │   └── report/
 │       └── renderer.py          # IF-005 PDF 渲染器（Jinja2 + Playwright）
 ├── prompts/                     # 五角色 Agent 提示词设计稿（01研究员~05总编）
@@ -87,6 +94,7 @@ AI财经日报/
 │   ├── report.html              # 主模板
 │   ├── css/style.css            # 样式（A4、页眉页脚、水印）
 │   └── partials/                # 封面/目录/页眉/页底 片段
+├── tests/                       # 单元测试（python3 -m unittest discover -s tests）
 ├── schemas/                     # 自动导出的 JSON Schema（8个模型）
 ├── data/
 │   ├── raw/{date}/              # 采集的原始文章

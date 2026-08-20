@@ -140,12 +140,17 @@ def cluster_articles(
 
     clusters: list[list[int]] = []  # 每个簇是文章索引列表
     cluster_bigrams: list[set[str]] = []  # 每个簇的合并 bigram 集合
+    # 架构评审 #9: 公司感知聚类——共享同一公司时放宽相似度阈值，
+    # 让"OpenAI 发布 GPT-6"与"OpenAI 推出 GPT-6 模型"这类近义标题合并
+    companies = [set(_extract_companies(a.title)) for a in articles]
+    cluster_companies: list[set[str]] = []
 
     for i, art in enumerate(articles):
         if not bigrams[i]:
             # 空标题，单独一组
             clusters.append([i])
             cluster_bigrams.append(bigrams[i])
+            cluster_companies.append(set(companies[i]))
             continue
 
         best_sim = 0.0
@@ -156,7 +161,10 @@ def cluster_articles(
             if not cb:
                 continue
             sim = _jaccard(bigrams[i], cb)
-            if sim > best_sim and sim >= title_threshold:
+            thr = title_threshold
+            if companies[i] and companies[i] & cluster_companies[j]:
+                thr = max(0.35, title_threshold - 0.15)
+            if sim > best_sim and sim >= thr:
                 best_sim = sim
                 best_cluster = j
 
@@ -165,10 +173,12 @@ def cluster_articles(
             clusters[best_cluster].append(i)
             # 更新簇的 bigram（合并）
             cluster_bigrams[best_cluster] = cluster_bigrams[best_cluster] | bigrams[i]
+            cluster_companies[best_cluster] |= companies[i]
         else:
             # 新建簇
             clusters.append([i])
             cluster_bigrams.append(set(bigrams[i]))
+            cluster_companies.append(set(companies[i]))
 
     # 转换成 NewsEvent
     events: list[NewsEvent] = []
