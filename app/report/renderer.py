@@ -33,7 +33,6 @@ class RenderConfig(BaseModel):
 
     show_toc: bool = True  # 页数少时不显示目录
     show_cover: bool = True
-    show_back_cover: bool = True
 
 
 class PDFRenderer:
@@ -65,10 +64,19 @@ class PDFRenderer:
     # ── HTML 渲染 ───────────────────────────────────
 
     def render_html(self, report: DailyReport) -> str:
-        """把日报数据渲染成 HTML 字符串。"""
+        """把日报数据渲染成 HTML 字符串（CSS 内联，脱离相对路径依赖）。"""
         template = self.env.get_template(self.config.template_name)
         ctx = self._build_context(report)
-        return template.render(**ctx)
+        html = template.render(**ctx)
+        # 架构评审 #18: 内联 CSS，临时 HTML 可放任意目录
+        css_path = Path(self.config.template_dir) / "css" / "style.css"
+        if css_path.exists():
+            css = css_path.read_text(encoding="utf-8")
+            html = html.replace(
+                '<link rel="stylesheet" href="css/style.css">',
+                f"<style>{css}</style>",
+            )
+        return html
 
     def _build_context(self, report: DailyReport) -> dict:
         """构造 Jinja2 模板上下文。"""
@@ -139,9 +147,11 @@ class PDFRenderer:
             version += 1
         out_path = candidate
 
-        # HTML 文件路径（用于 file:// 加载，CSS 相对路径才能生效）
-        template_dir = Path(self.config.template_dir).resolve()
-        html_path = template_dir / "_render_tmp.html"
+        # 架构评审 #18: 临时 HTML 放系统 tempdir（不再污染 templates/ 源码目录）
+        import tempfile
+        fd, tmp_name = tempfile.mkstemp(suffix=".html", prefix="daily_render_")
+        os.close(fd)
+        html_path = Path(tmp_name)
         html_path.write_text(html, encoding="utf-8")
 
         try:

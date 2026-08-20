@@ -85,8 +85,6 @@ def generate_queries(
 
         batch_id = batch["batch_id"]
         max_results = batch.get("max_results", defaults["max_results_per_query"])
-        depth = batch.get("depth", defaults["depth"])
-        language = batch.get("language", defaults["language"])
 
         batch_queries: list[SearchQuery] = []
 

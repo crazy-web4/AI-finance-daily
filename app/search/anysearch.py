@@ -44,25 +44,8 @@ class SearchQuery(BaseModel):
     batch_id: str | None = None
 
 
-class SearchResultItem(BaseModel):
-    """单条搜索结果(统一格式)。"""
-    result_id: str
-    title: str
-    url: HttpUrl
-    source_domain: str
-    source_name: str | None = None
-    snippet: str = ""
-    content: str | None = None
-    published_at: datetime | None = None
-    fetched_at: datetime
-    language: str | None = None
-    score: float | None = None
-    query_origin: str | None = None
-
-    @classmethod
-    def make_id(cls, url: str, title: str) -> str:
-        seed = f"{url}|{title}".lower()
-        return "res_" + hashlib.sha256(seed.encode()).hexdigest()[:12]
+# 架构评审 #12: 数据模型单一事实源在 app/schemas/models.py
+from app.schemas.models import SearchResultItem  # noqa: E402
 
 
 class SearchQueryResponse(BaseModel):
@@ -351,9 +334,14 @@ class AnySearchClient:
         self,
         api_key: str | None = None,
         timeout: float = 60.0,
+        batch_size: int = 5,
+        max_retries: int = 2,
     ) -> None:
         self.api_key = api_key or os.environ.get("ANYSEARCH_API_KEY", "")
         self.timeout = timeout
+        # 架构评审 #17: batch 上限与重试次数可配
+        self.batch_size = batch_size
+        self.max_retries = max_retries
         self._client = httpx.AsyncClient(timeout=timeout)
         self._request_id = 0
 
@@ -371,23 +359,34 @@ class AnySearchClient:
         return self._request_id
 
     async def _mcp_call(self, method: str, params: dict[str, Any]) -> dict[str, Any]:
-        """调用 MCP 工具。"""
+        """调用 MCP 工具。架构评审 #17: 网络错误/5xx 自动重试退避。"""
+        import asyncio
         payload = {
             "jsonrpc": "2.0",
             "id": self._next_id(),
             "method": method,
             "params": params,
         }
-        resp = await self._client.post(
-            self.MCP_URL,
-            json=payload,
-            headers=self._headers(),
-        )
-        resp.raise_for_status()
-        data = resp.json()
-        if "error" in data:
-            raise RuntimeError(f"MCP error: {data['error']}")
-        return data.get("result", {})
+        last_err: Exception | None = None
+        for attempt in range(self.max_retries + 1):
+            try:
+                resp = await self._client.post(
+                    self.MCP_URL,
+                    json=payload,
+                    headers=self._headers(),
+                )
+                resp.raise_for_status()
+                data = resp.json()
+                if "error" in data:
+                    raise RuntimeError(f"MCP error: {data['error']}")
+                return data.get("result", {})
+            except (httpx.TransportError, httpx.HTTPStatusError) as e:
+                last_err = e
+                retryable = not isinstance(e, httpx.HTTPStatusError) or e.response.status_code >= 500
+                if not retryable or attempt >= self.max_retries:
+                    raise
+                await asyncio.sleep(2 ** attempt)  # 1s, 2s
+        raise last_err or RuntimeError("unreachable")
 
     async def search(self, query: SearchQuery) -> SearchQueryResponse:
         """执行单条搜索。"""
@@ -456,7 +455,7 @@ class AnySearchClient:
             ).hexdigest()[:10]
 
         # AnySearch batch_search 最多 5 条，分批执行
-        BATCH_SIZE = 5
+        BATCH_SIZE = self.batch_size
         all_responses: list[SearchQueryResponse] = []
 
         for i in range(0, len(queries), BATCH_SIZE):
@@ -475,10 +474,20 @@ class AnySearchClient:
                 batch_args.append(arg)
 
             try:
-                result = await self._mcp_call("tools/call", {
-                    "name": "batch_search",
-                    "arguments": {"queries": batch_args},
-                })
+                # 架构评审 #17: 批次级重试一次（与 _mcp_call 内部重试构成两层防御）
+                result = None
+                for _try in range(2):
+                    try:
+                        result = await self._mcp_call("tools/call", {
+                            "name": "batch_search",
+                            "arguments": {"queries": batch_args},
+                        })
+                        break
+                    except Exception:
+                        if _try == 0:
+                            await asyncio.sleep(1)
+                        else:
+                            raise
                 content_list = result.get("content", [])
                 md_text = content_list[0].get("text", "") if content_list else ""
 

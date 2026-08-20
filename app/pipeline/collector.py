@@ -26,17 +26,13 @@ from app.search.anysearch import (
     SearchResultItem,
     TavilyClient,
 )
+# 架构评审 #12: 模型单一事实源在 schemas；此处 re-export 保持下游导入路径不变
+from app.schemas.models import (  # noqa: E402
+    RawNewsArticle,
+    SourceReliability,
+    normalize_url as _normalize_url,
+)
 
-
-# ═══════════════════════════════════════════════════════
-# 归一化后的文章模型
-# ═══════════════════════════════════════════════════════
-
-class SourceReliability(str):
-    HIGH = "high"
-    MEDIUM = "medium"
-    LOW = "low"
-    UNKNOWN = "unknown"
 
 
 # 来源分级（按域名后缀匹配）
@@ -61,68 +57,6 @@ TIER3_DOMAINS = {
 }
 
 
-class RawNewsArticle(BaseModel):
-    """归一化后的原始新闻。"""
-    article_id: str
-    title: str
-    url: HttpUrl
-    source_domain: str
-    source_name: str | None = None
-    content: str = ""
-    snippet: str = ""
-    published_at: datetime | None = None
-    fetched_at: datetime
-    language: str | None = None
-    category: str | None = None
-    search_query: str | None = None
-    search_batch: str | None = None
-    source_reliability: str = "unknown"
-    result_count: int = Field(default=1, description="在多少条查询中出现")
-
-    @classmethod
-    def make_id(cls, url: str) -> str:
-        normalized = _normalize_url(url)
-        return "art_" + hashlib.sha256(normalized.encode()).hexdigest()[:12]
-
-
-# ═══════════════════════════════════════════════════════
-# URL 归一化
-# ═══════════════════════════════════════════════════════
-
-def _normalize_url(url: str) -> str:
-    """
-    URL 归一化，用于去重。
-    - 统一小写 scheme 和 netloc
-    - 去掉 fragment
-    - 去掉常见追踪参数 (utm_*, fbclid, gclid 等)
-    - 去掉末尾斜杠
-    """
-    try:
-        parsed = urlparse(url)
-    except Exception:
-        return url
-
-    # 去掉追踪参数
-    query_params = []
-    if parsed.query:
-        for pair in parsed.query.split("&"):
-            if not pair:
-                continue
-            key = pair.split("=")[0].lower()
-            if key.startswith("utm_") or key in ("fbclid", "gclid", "ref", "ref_src", "referrer", "mc_cid", "mc_eid"):
-                continue
-            query_params.append(pair)
-
-    # 重建 URL
-    normalized = urlunparse((
-        parsed.scheme.lower(),
-        parsed.netloc.lower(),
-        parsed.path.rstrip("/") or "/",
-        parsed.params,
-        "&".join(query_params),
-        "",  # 去掉 fragment
-    ))
-    return normalized
 
 
 # ═══════════════════════════════════════════════════════
@@ -328,9 +262,12 @@ class NewsCollector:
         self,
         queries: list[SearchQuery],
         batch_id: str | None = None,
-        dedup: bool = True,
+        url_dedup: bool = True,
+        title_dedup: bool = True,
         tavily_top_n: int = 5,
         max_age_hours: int = 24,
+        title_similarity_threshold: float = 0.85,
+        min_content_length: int = 0,
     ) -> list[RawNewsArticle]:
         """
         执行一次完整采集：搜索 → 归一化 → 去重。
@@ -433,10 +370,20 @@ class NewsCollector:
             flush=True,
         )
 
-        # 4. 去重
-        if dedup:
+        # 3.5 内容长度过滤（架构评审 #13：filtering.min_content_length 接线）
+        if min_content_length > 0:
+            before = len(articles)
+            articles = [a for a in articles if len(a.snippet) >= min_content_length]
+            print(
+                f"  📏 内容长度过滤(≥{min_content_length}): 保留 {len(articles)} / 丢弃 {before - len(articles)}",
+                flush=True,
+            )
+
+        # 4. 去重（架构评审 #13：url_dedup / title_dedup 独立开关）
+        if url_dedup:
             articles = dedup_by_url(articles)
-            articles = dedup_by_title(articles, similarity_threshold=0.85)
+        if title_dedup:
+            articles = dedup_by_title(articles, similarity_threshold=title_similarity_threshold)
 
         # 4. 按来源可靠性 + 出现次数 排序
         rel_weight = {"high": 3, "medium": 2, "low": 1, "unknown": 0}
