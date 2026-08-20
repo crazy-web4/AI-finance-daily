@@ -212,19 +212,49 @@ class AnalystAgent:
 # 辅助：分析结果 → ReportItem
 # ═══════════════════════════════════════════════════════
 
-def _analysis_to_item(event, analysis, rank, category_id) -> ReportItem:
+OFFICIAL_SOURCE_KEYWORDS = [
+    "openai.com", "anthropic.com", "nvidia.com", "gov", "gov.cn",
+    "arxiv.org", "whitehouse",
+]
+
+
+def _analysis_to_item(event, analysis, rank, category_id, article_map=None) -> ReportItem:
     sources = []
-    # 优先用分析出的来源名称，其次用域名
+    # 优先用分析出的来源名称，其次用域名/来源名
     src_names = analysis.get("source_names", []) or []
+    seen_domains: set[str] = set()
+
+    # 优先从 article_map 取真实文章 URL（按域名去重，保持文章的可靠性排序）
+    if article_map:
+        for aid in event.article_ids:
+            art = article_map.get(aid)
+            if art is None:
+                continue
+            d = art.source_domain
+            if d in seen_domains:
+                continue
+            seen_domains.add(d)
+            idx = len(sources)
+            name = src_names[idx] if idx < len(src_names) else (art.source_name or d)
+            sources.append(ReportSource(
+                name=name,
+                url=str(art.url),
+                is_official=any(kw in d for kw in OFFICIAL_SOURCE_KEYWORDS),
+            ))
+            if len(sources) >= 5:
+                break
+
+    # 回退：无 article_map 时才用域名级 URL
     for i, d in enumerate(event.source_domains[:5]):
+        if len(sources) >= 5 or d in seen_domains:
+            continue
+        seen_domains.add(d)
         try:
             name = src_names[i] if i < len(src_names) else d
-            # 判断是否官方来源
-            is_official = any(kw in d for kw in ["openai.com", "anthropic.com", "nvidia.com", "gov", "gov.cn", "arxiv.org", "whitehouse"])
             sources.append(ReportSource(
                 name=name,
                 url=f"https://{d}",
-                is_official=is_official,
+                is_official=any(kw in d for kw in OFFICIAL_SOURCE_KEYWORDS),
             ))
         except Exception:
             pass
@@ -269,7 +299,7 @@ class ChiefEditorAgent:
     def __init__(self, llm=None):
         self.llm = llm or LLMClient()
 
-    def finalize(self, analyzed_results, report_date=None):
+    def finalize(self, analyzed_results, report_date=None, article_map=None):
         if not report_date:
             report_date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
@@ -314,9 +344,10 @@ class ChiefEditorAgent:
 
         sections = []
 
-        # 今日头条
+        # 今日头条（记录入选事件，后续栏目去重用）
+        top_event_ids = {e.event_id for _, e, _ in top_news}
         top_items = [
-            _analysis_to_item(e, a, rank, "top_news")
+            _analysis_to_item(e, a, rank, "top_news", article_map)
             for rank, (_, e, a) in enumerate(top_news, 1)
         ]
         sections.append(ReportSection(
@@ -326,11 +357,15 @@ class ChiefEditorAgent:
             items=top_items,
         ))
 
-        # 其他栏目
+        # 其他栏目（剔除已入选今日头条的事件，避免同一条新闻出现两次）
         for sec_id, sec_name in section_defs[1:]:
-            items_data = by_category.get(sec_id, [])[:8]
+            cat_items = [
+                (ev, an) for ev, an in by_category.get(sec_id, [])
+                if ev.event_id not in top_event_ids
+            ]
+            items_data = cat_items[:8]
             report_items = [
-                _analysis_to_item(event, analysis, rank, sec_id)
+                _analysis_to_item(event, analysis, rank, sec_id, article_map)
                 for rank, (event, analysis) in enumerate(items_data, 1)
             ]
             sections.append(ReportSection(

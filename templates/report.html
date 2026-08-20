@@ -39,7 +39,7 @@
         <span class="toc-cn-num">{{ loop.index | replace('1', '一') | replace('2', '二') | replace('3', '三') | replace('4', '四') | replace('5', '五') | replace('6', '六') }}</span>
         <span class="toc-cn-name">{{ section.section_name }}</span>
         <span class="toc-dots">………………………………………………………………………………………………</span>
-        <span class="toc-page">{{ section._page_num if section._page_num else loop.index + 1 }}</span>
+        <span class="toc-page">{{ section.item_count }} 条</span>
       </a>
     </li>
     {% endif %}

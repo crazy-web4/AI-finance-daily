@@ -107,8 +107,8 @@ playwright install chromium        # PDF 渲染需要 Chromium
 cp .env.example .env
 # 编辑 .env，填入 ANYSEARCH_API_KEY（必填）与 LLM 相关配置
 
-# 3. 端到端冒烟（--test 需配合 --queries-per-batch 才是少量查询）
-python run_daily.py --test --queries-per-batch 2
+# 3. 测试模式跑一遍端到端（每批 2 条查询，几分钟）
+python run_daily.py --test
 
 # 4. 全量生成当天日报
 python run_daily.py --full --backfill

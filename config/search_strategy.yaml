@@ -215,7 +215,7 @@ search_strategy:
     max_results: 10
     depth: basic
     queries:
-    - query: LLM new model release 2026
+    - query: LLM new model release
       category: model_tech
       subcategory: foundation_model
     - query: reasoning model AI breakthrough
@@ -287,7 +287,7 @@ search_strategy:
     - query: AI venture capital investment trend
       category: funding
       subcategory: vc_trend
-    - query: AI IPO public offering 2026
+    - query: AI IPO public offering
       category: funding
       subcategory: ipo
     - query: AI enterprise adoption case study
@@ -473,7 +473,7 @@ search_strategy:
     - query: AI 芯片 国产 最新
       category: industry
       subcategory: cn_chip
-    - query: 生成式AI 监管 政策 2026
+    - query: 生成式AI 监管 政策
       category: policy
       subcategory: cn_policy
     - query: AI Agent 创业 最新

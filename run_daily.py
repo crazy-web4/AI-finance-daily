@@ -48,8 +48,10 @@ async def collect_articles(test_mode: bool, max_per_batch: int = 0, tavily_n: in
     strategy = load_strategy()
 
     if test_mode:
-        queries = generate_queries(strategy, max_per_batch=max_per_batch if max_per_batch > 0 else None)
-        print(f"  测试模式: {len(queries)} 条查询", flush=True)
+        # --queries-per-batch 未指定时默认每批 2 条（与 main.py collect --test 对齐），避免静默全量
+        effective_per_batch = max_per_batch if max_per_batch > 0 else 2
+        queries = generate_queries(strategy, max_per_batch=effective_per_batch)
+        print(f"  测试模式: {len(queries)} 条查询（每批限 {effective_per_batch} 条）", flush=True)
     else:
         queries = generate_queries(strategy)
         print(f"  全量模式: {len(queries)} 条查询", flush=True)
@@ -155,7 +157,7 @@ async def do_agent_analysis(events, article_map, max_events=6, concurrency=3):
 
     chief = ChiefEditorAgent(llm=llm)
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    report = chief.finalize(analyzed, report_date=today)
+    report = chief.finalize(analyzed, report_date=today, article_map=article_map)
 
     print(f"\n  ✅ 总编辑完成", flush=True)
     print(f"     总条目: {report.total_items}", flush=True)
