@@ -14,6 +14,8 @@
 - **双搜索引擎**：AnySearch（MCP 协议）为主，Tavily 可选补充
 - **来源分级**：域名自动分级（官方一手 / 权威媒体 / 科技媒体），影响排序与去重取舍
 - **智能去重聚类**：URL 归一化去重 + 标题相似度（bigram Jaccard）去重 + 事件聚类，多篇报道归并为一个事件
+- **跨天事件记忆**：近 3 天已报道事件自动过滤，同一新闻不会连续多天上报
+- **发布时间估算**：URL 日期 + 中英文snippet日期多信号估算，24h 时效过滤真实生效
 - **LLM 分析编辑**：每个事件由 Analyst Agent 完成分类、重要性打分、中文标题撰写、详情写作、关键数据提取；Chief Editor 完成栏目组织、头条遴选、导读撰写
 - **杂志级 PDF 排版**：Jinja2 模板 + Playwright(Chromium) 渲染，含封面、目录、六大栏目、水印
 - **全链路可恢复**：采集结果、聚类结果、日报 JSON 均落盘，任意阶段可断点续跑
@@ -107,8 +109,8 @@ playwright install chromium        # PDF 渲染需要 Chromium
 cp .env.example .env
 # 编辑 .env，填入 ANYSEARCH_API_KEY（必填）与 LLM 相关配置
 
-# 3. 端到端冒烟（--test 需配合 --queries-per-batch 才是少量查询）
-python run_daily.py --test --queries-per-batch 2
+# 3. 测试模式跑一遍端到端（每批 2 条查询，几分钟）
+python run_daily.py --test
 
 # 4. 全量生成当天日报
 python run_daily.py --full --backfill
@@ -127,6 +129,7 @@ python run_daily.py --full --backfill
 | `ARK_BASE_URL` | ✅* | LLM Base URL |
 | `LLM_MODEL` | 可选 | 模型名，默认 `doubao-pro-128k-240515` |
 | `TAVILY_API_KEY` | 可选 | Tavily 补充搜索，不填则自动跳过 |
+| `REPORT_TIMEZONE` | 可选 | 报告时区，默认 `Asia/Shanghai`（影响报告日期/时间窗口） |
 
 \* 也可用 `OPENAI_API_KEY` / `OPENAI_BASE_URL` 代替 ARK 配置。
 

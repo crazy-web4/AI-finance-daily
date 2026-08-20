@@ -24,6 +24,8 @@ from app.search.queries import load_strategy, generate_queries
 from app.pipeline.collector import NewsCollector, RawNewsArticle
 from app.pipeline.cluster import cluster_articles, build_article_map
 from app.pipeline.backfill import backfill_empty_categories
+from app.pipeline.history import filter_seen_events, load_recent_event_titles
+from app.utils.timeutil import report_today
 from app.agents.base import LLMClient
 from app.agents.pipeline import AnalystAgent, ChiefEditorAgent
 from app.report.renderer import PDFRenderer
@@ -48,8 +50,10 @@ async def collect_articles(test_mode: bool, max_per_batch: int = 0, tavily_n: in
     strategy = load_strategy()
 
     if test_mode:
-        queries = generate_queries(strategy, max_per_batch=max_per_batch if max_per_batch > 0 else None)
-        print(f"  测试模式: {len(queries)} 条查询", flush=True)
+        # --queries-per-batch 未指定时默认每批 2 条（与 main.py collect --test 对齐），避免静默全量
+        effective_per_batch = max_per_batch if max_per_batch > 0 else 2
+        queries = generate_queries(strategy, max_per_batch=effective_per_batch)
+        print(f"  测试模式: {len(queries)} 条查询（每批限 {effective_per_batch} 条）", flush=True)
     else:
         queries = generate_queries(strategy)
         print(f"  全量模式: {len(queries)} 条查询", flush=True)
@@ -76,42 +80,43 @@ def load_from_file(path: str) -> list[RawNewsArticle]:
 
 
 
-def _balanced_select_events(events, article_map, max_total=12):
-    """均衡选择事件：每个分类至少选几个，其余按分数补。"""
-    # 先按 category 分组（用 event_type_guess 和关键词粗略分）
-    by_cat = {}
+def _balanced_select_events(events, article_map, max_total=18):
+    """均衡选择事件（架构评审 #10 重写）。
+
+    - 分类口径: 用事件关联文章的 category 多数投票（来自查询打标），
+      不再用标题关键词猜测，避免与 LLM 分类口径冲突；
+    - 每个分类保底 2 个（预算 >=12 时），其余按热度（文章数、来源数）补足；
+    - 用 event_id 集合去重，避免 O(n²) 的模型相等性比较。
+    """
+    from collections import Counter
+
+    def ev_cat(e) -> str:
+        cats = Counter()
+        for aid in e.article_ids:
+            art = article_map.get(aid)
+            if art and art.category:
+                cats[art.category] += 1
+        return cats.most_common(1)[0][0] if cats else "industry"
+
+    by_cat: dict[str, list] = {}
     for e in events:
-        # 用分类关键词粗分
-        title = e.canonical_title.lower()
-        cat = "industry"
-        if any(kw in title for kw in ["model", "gpt", "llm", "agent", "大模型", "模型", "开源", "推理"]):
-            cat = "model_tech"
-        elif any(kw in title for kw in ["funding", "融资", "估值", "收购", "并购", "投资", "raised", "series"]):
-            cat = "funding"
-        elif any(kw in title for kw in ["policy", "regulation", "行政令", "监管", "法案", "law", "act", "政策"]):
-            cat = "policy"
-        elif any(kw in title for kw in ["arxiv", "paper", "研究", "论文", "research", "breakthrough", "propose"]):
-            cat = "research"
+        by_cat.setdefault(ev_cat(e), []).append(e)
 
-        if cat not in by_cat:
-            by_cat[cat] = []
-        by_cat[cat].append(e)
+    heat = lambda e: (e.article_count, len(e.source_domains))
+    selected: list = []
+    sel_ids: set[str] = set()
+    per_cat_min = 2 if max_total >= 12 else 1
 
-    # 每个分类先选 2 个（按文章数排序）
-    selected = []
-    per_cat_min = min(2, max_total // 6)
-    for cat in ["top_news", "model_tech", "funding", "policy", "research", "industry"]:
-        cat_events = sorted(
-            by_cat.get(cat, []),
-            key=lambda e: (e.article_count, len(e.source_domains)),
-            reverse=True,
-        )
-        selected.extend(cat_events[:per_cat_min])
+    for cat in ["model_tech", "funding", "policy", "research", "industry"]:
+        for e in sorted(by_cat.get(cat, []), key=heat, reverse=True)[:per_cat_min]:
+            if len(selected) >= max_total:
+                break
+            selected.append(e)
+            sel_ids.add(e.event_id)
 
-    # 剩下的按文章数补
-    remaining = [e for e in events if e not in selected]
-    remaining.sort(
-        key=lambda e: (e.article_count, len(e.source_domains)),
+    remaining = sorted(
+        (e for e in events if e.event_id not in sel_ids),
+        key=heat,
         reverse=True,
     )
     for e in remaining:
@@ -119,8 +124,7 @@ def _balanced_select_events(events, article_map, max_total=12):
             break
         selected.append(e)
 
-    # 保持原顺序（按重要性）
-    return selected[:max_total]
+    return selected
 
 
 def do_cluster(articles):
@@ -154,8 +158,8 @@ async def do_agent_analysis(events, article_map, max_events=6, concurrency=3):
         sys.exit(1)
 
     chief = ChiefEditorAgent(llm=llm)
-    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    report = chief.finalize(analyzed, report_date=today)
+    today = report_today()
+    report = chief.finalize(analyzed, report_date=today, article_map=article_map)
 
     print(f"\n  ✅ 总编辑完成", flush=True)
     print(f"     总条目: {report.total_items}", flush=True)
@@ -189,7 +193,7 @@ async def main():
     parser.add_argument("--test", action="store_true", help="测试模式")
     parser.add_argument("--full", action="store_true", help="全量模式")
     parser.add_argument("--from-file", type=str, help="从已采集的JSON文件开始")
-    parser.add_argument("--max-events", type=int, default=6, help="分析事件数上限 (默认6)")
+    parser.add_argument("--max-events", type=int, default=None, help="分析事件数上限 (默认: --test 6 / 否则 18)")
     parser.add_argument("--concurrency", type=int, default=3, help="Agent并发数 (默认3)")
     parser.add_argument("--no-agent", action="store_true", help="跳过Agent")
     parser.add_argument("--backfill", action="store_true", help="空栏目自动补全近7天数据")
@@ -199,7 +203,7 @@ async def main():
     args = parser.parse_args()
 
     start_time = time.time()
-    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    today = report_today()
 
     print("🚀 AI 财经日报生成器", flush=True)
     print(f"📅 日期: {today}", flush=True)
@@ -221,6 +225,17 @@ async def main():
     events = do_cluster(articles)
     article_map = build_article_map(articles)
 
+    # Step 2.5: 跨天去重（事件记忆：近3天已报道事件不再入选）
+    recent_titles = load_recent_event_titles(days=3, exclude_date=today)
+    if recent_titles:
+        events, seen = filter_seen_events(events, recent_titles)
+        if seen:
+            print(f"  🧠 跨天去重: 过滤 {len(seen)} 个近3天已报道事件", flush=True)
+            for e, (d, past_title, sim) in seen[:5]:
+                print(f"     - [{d}] {e.canonical_title[:38]} (相似度 {sim:.2f})", flush=True)
+    else:
+        print("  🧠 跨天去重: 无历史事件索引，跳过", flush=True)
+
     # 保存聚类结果
     events_path = Path(f"data/events/{today}/events_{int(time.time())}.json")
     events_path.parent.mkdir(parents=True, exist_ok=True)
@@ -235,8 +250,9 @@ async def main():
         return
 
     # Step 3: Agent
-    # 均衡选择事件：每个分类至少选 2 个，其余按重要性补
-    selected_events = _balanced_select_events(events, article_map, args.max_events)
+    # 均衡选择事件：每个分类保底 2 个，其余按热度补
+    effective_max_events = args.max_events or (6 if args.test else 18)
+    selected_events = _balanced_select_events(events, article_map, effective_max_events)
     print(f"  🎯 均衡选择 {len(selected_events)} 个事件用于分析", flush=True)
 
     report = await do_agent_analysis(

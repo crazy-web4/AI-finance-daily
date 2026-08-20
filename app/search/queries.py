@@ -22,9 +22,12 @@ def load_strategy(config_path: str | Path = "config/search_strategy.yaml") -> di
 
 
 def _add_time_qualifier(query: str, category: str | None = None) -> str:
-    """给查询词注入时间限定，提升时效性。"""
+    """给查询词注入时间限定，提升时效性。时间词全部按当前日期动态生成。"""
     now = datetime.now()
+    year = now.strftime("%Y")
+    last_year = str(int(year) - 1)
     month_en = now.strftime("%B %Y")
+    month_name_lower = now.strftime("%B").lower()
     month_short = now.strftime("%Y年%m月")
     today = now.strftime("%Y-%m-%d")
 
@@ -34,23 +37,24 @@ def _add_time_qualifier(query: str, category: str | None = None) -> str:
     has_chinese = any('一' <= c <= '鿿' for c in query)
     if has_chinese:
         # 避免重复添加
-        if any(kw in query for kw in ['最新', '今日', '本周', '2026', '2025']):
+        if any(kw in query for kw in ['最新', '今日', '本周', year, last_year]):
             return query
         if category in ('funding', 'industry'):
             return f"{query} {month_short} 最新"
         return f"{query} 最新"
 
     # 英文查询加英文时间限定
-    if any(kw in q_lower for kw in ['today', 'latest', 'new', 'this week', '2026', '2025', 'august']):
+    if any(kw in q_lower for kw in ['today', 'latest', 'new', 'this week', year, last_year, month_name_lower]):
         return query
 
     # 按分类加不同的时间限定
     if category in ('funding',):
         return f"{query} {month_en} latest"
     elif category in ('policy',):
-        return f"{query} 2026 update"
+        # 查询词已含 update 时只追加年份，避免 "update 2026 update" 重复
+        return f"{query} {year}" if "update" in q_lower else f"{query} {year} update"
     elif category in ('research',):
-        return f"{query} 2026"
+        return f"{query} {year}"
     else:
         return f"{query} latest news {today}"
 
