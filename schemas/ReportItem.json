@@ -1,0 +1,157 @@
+{
+  "$defs": {
+    "Category": {
+      "enum": [
+        "top_news",
+        "model_tech",
+        "funding",
+        "policy",
+        "research",
+        "industry"
+      ],
+      "title": "Category",
+      "type": "string"
+    },
+    "ReportKeyData": {
+      "description": "日报条目中的关键数据。",
+      "properties": {
+        "label": {
+          "description": "数据项标签，如 '发布时间'、'融资额'",
+          "title": "Label",
+          "type": "string"
+        },
+        "value": {
+          "description": "数值/内容",
+          "title": "Value",
+          "type": "string"
+        },
+        "source_indexes": {
+          "items": {
+            "type": "integer"
+          },
+          "title": "Source Indexes",
+          "type": "array"
+        }
+      },
+      "required": [
+        "label",
+        "value"
+      ],
+      "title": "ReportKeyData",
+      "type": "object"
+    },
+    "ReportSource": {
+      "description": "日报条目中的来源。",
+      "properties": {
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "url": {
+          "format": "uri",
+          "maxLength": 2083,
+          "minLength": 1,
+          "title": "Url",
+          "type": "string"
+        },
+        "is_official": {
+          "default": false,
+          "title": "Is Official",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "name",
+        "url"
+      ],
+      "title": "ReportSource",
+      "type": "object"
+    }
+  },
+  "description": "Agent-4 编辑好的日报条目。",
+  "properties": {
+    "item_id": {
+      "description": "条目ID，如 item_001",
+      "title": "Item Id",
+      "type": "string"
+    },
+    "event_id": {
+      "title": "Event Id",
+      "type": "string"
+    },
+    "rank": {
+      "description": "在所属栏目内的排名",
+      "minimum": 1,
+      "title": "Rank",
+      "type": "integer"
+    },
+    "category": {
+      "$ref": "#/$defs/Category"
+    },
+    "title": {
+      "description": "条目标题",
+      "title": "Title",
+      "type": "string"
+    },
+    "lead": {
+      "description": "导语，2-3句话",
+      "title": "Lead",
+      "type": "string"
+    },
+    "key_data": {
+      "items": {
+        "$ref": "#/$defs/ReportKeyData"
+      },
+      "title": "Key Data",
+      "type": "array"
+    },
+    "details": {
+      "description": "事件详情，1-2段",
+      "title": "Details",
+      "type": "string"
+    },
+    "analysis": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "行业影响/编辑判断",
+      "title": "Analysis"
+    },
+    "sources": {
+      "items": {
+        "$ref": "#/$defs/ReportSource"
+      },
+      "title": "Sources",
+      "type": "array"
+    },
+    "word_count": {
+      "description": "正文字数统计",
+      "minimum": 0,
+      "title": "Word Count",
+      "type": "integer"
+    },
+    "edited_at": {
+      "format": "date-time",
+      "title": "Edited At",
+      "type": "string"
+    }
+  },
+  "required": [
+    "item_id",
+    "event_id",
+    "rank",
+    "category",
+    "title",
+    "lead",
+    "details",
+    "word_count"
+  ],
+  "title": "ReportItem",
+  "type": "object"
+}

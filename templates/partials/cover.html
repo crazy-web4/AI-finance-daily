@@ -1,0 +1,42 @@
+<!--
+  封面页模板
+  变量:
+    - report_title:   报告标题
+    - report_date:    日期
+    - report_date_cn: 中文日期
+    - company:        公司名
+    - wechat_id:      微信号
+    - editor_name:    推送人
+    - subtitle_tags:  标签行
+-->
+<section class="cover-page" data-watermark="{{ company }}">
+
+  <div class="cover-content">
+
+    <div class="cover-top">
+      <div class="cover-company">{{ company }}</div>
+      <div class="cover-line"></div>
+    </div>
+
+    <div class="cover-main">
+      <h1 class="cover-title">{{ report_title }}</h1>
+      <div class="cover-subtitle-line"></div>
+      <div class="cover-tags">{{ subtitle_tags }}</div>
+    </div>
+
+    <div class="cover-bottom">
+      <div class="cover-date">{{ report_date_cn }}</div>
+      <div class="cover-date-en">{{ report_date }}</div>
+      <div class="cover-footer-line"></div>
+      <div class="cover-contact">
+        <span class="contact-label">推送人：</span>
+        <span class="contact-name">{{ editor_name }}</span>
+        <span class="contact-sep">｜</span>
+        <span class="contact-label">微信：</span>
+        <span class="contact-wechat">{{ wechat_id }}</span>
+      </div>
+    </div>
+
+  </div>
+
+</section>

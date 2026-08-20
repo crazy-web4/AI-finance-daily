@@ -1,0 +1,548 @@
+search_strategy:
+  version: 1.0.0
+  description: AI行业日报搜索矩阵 V1
+  defaults:
+    time_window_hours: 24
+    max_results_per_query: 10
+    depth: basic
+    language: en,zh
+    concurrency: 8
+    dedup_by_url: true
+  batches:
+  - batch_id: company_events
+    name: 核心公司事件搜索
+    description: 30家核心AI公司 × 关键事件类型
+    enabled: true
+    strategy: cartesian
+    template: '{company} {event}'
+    max_results: 8
+    depth: basic
+    companies:
+    - name: OpenAI
+      weight: 10
+      aliases:
+      - OpenAI
+    - name: Anthropic
+      weight: 9
+      aliases:
+      - Anthropic
+    - name: Google DeepMind
+      weight: 9
+      aliases:
+      - DeepMind
+      - Google DeepMind
+    - name: Meta AI
+      weight: 8
+      aliases:
+      - Meta AI
+      - Meta
+    - name: xAI
+      weight: 7
+      aliases:
+      - xAI
+      - xAI Grok
+    - name: Mistral
+      weight: 7
+      aliases:
+      - Mistral AI
+      - Mistral
+    - name: Cohere
+      weight: 6
+      aliases:
+      - Cohere
+    - name: DeepSeek
+      weight: 9
+      aliases:
+      - DeepSeek
+      - 深度求索
+    - name: MiniMax
+      weight: 7
+      aliases:
+      - MiniMax
+      - 稀宇科技
+    - name: Moonshot AI
+      weight: 7
+      aliases:
+      - Moonshot AI
+      - 月之暗面
+      - Kimi
+    - name: Zhipu AI
+      weight: 7
+      aliases:
+      - Zhipu AI
+      - 智谱AI
+      - ChatGLM
+    - name: 01.AI
+      weight: 6
+      aliases:
+      - 01.AI
+      - 零一万物
+    - name: Google
+      weight: 8
+      aliases:
+      - Google
+      - Alphabet
+    - name: Microsoft
+      weight: 8
+      aliases:
+      - Microsoft
+      - 微软
+    - name: Amazon
+      weight: 7
+      aliases:
+      - Amazon
+      - AWS
+    - name: Apple
+      weight: 7
+      aliases:
+      - Apple
+      - 苹果
+    - name: Alibaba
+      weight: 7
+      aliases:
+      - Alibaba
+      - 阿里巴巴
+      - 阿里云
+      - Tongyi
+      - 通义
+    - name: Tencent
+      weight: 7
+      aliases:
+      - Tencent
+      - 腾讯
+      - Hunyuan
+      - 混元
+    - name: Baidu
+      weight: 6
+      aliases:
+      - Baidu
+      - 百度
+      - 文心一言
+      - ERNIE
+    - name: ByteDance
+      weight: 7
+      aliases:
+      - ByteDance
+      - 字节跳动
+      - 豆包
+      - Doubao
+    - name: Huawei
+      weight: 7
+      aliases:
+      - Huawei
+      - 华为
+      - 盘古大模型
+      - Pangu
+    - name: NVIDIA
+      weight: 10
+      aliases:
+      - NVIDIA
+      - 英伟达
+    - name: AMD
+      weight: 7
+      aliases:
+      - AMD
+      - 超威半导体
+    - name: Intel
+      weight: 6
+      aliases:
+      - Intel
+      - 英特尔
+    - name: Cerebras
+      weight: 6
+      aliases:
+      - Cerebras
+    - name: Groq
+      weight: 7
+      aliases:
+      - Groq
+    - name: TSMC
+      weight: 7
+      aliases:
+      - TSMC
+      - 台积电
+    - name: Samsung
+      weight: 6
+      aliases:
+      - Samsung
+      - 三星
+    - name: SK Hynix
+      weight: 6
+      aliases:
+      - SK Hynix
+      - 海力士
+    - name: Perplexity
+      weight: 7
+      aliases:
+      - Perplexity AI
+      - Perplexity
+    event_types:
+    - keyword: AI model
+      category: model_tech
+    - keyword: model release
+      category: model_tech
+    - keyword: API
+      category: model_tech
+    - keyword: AI agent
+      category: model_tech
+    - keyword: benchmark
+      category: model_tech
+    - keyword: research paper
+      category: research
+    - keyword: funding
+      category: funding
+    - keyword: valuation
+      category: funding
+    - keyword: acquisition
+      category: funding
+    - keyword: partnership
+      category: industry
+    - keyword: chip
+      category: industry
+    - keyword: data center
+      category: industry
+    - keyword: regulation
+      category: policy
+    - keyword: lawsuit
+      category: policy
+    - keyword: revenue
+      category: industry
+  - batch_id: industry_trends
+    name: 行业趋势搜索
+    description: 按行业主题维度搜索，捕获非公司绑定的重大事件
+    enabled: true
+    strategy: list
+    max_results: 10
+    depth: basic
+    queries:
+    - query: LLM new model release 2026
+      category: model_tech
+      subcategory: foundation_model
+    - query: reasoning model AI breakthrough
+      category: model_tech
+      subcategory: reasoning
+    - query: multimodal AI model new
+      category: model_tech
+      subcategory: multimodal
+    - query: video generation AI model
+      category: model_tech
+      subcategory: video_gen
+    - query: image generation AI model new
+      category: model_tech
+      subcategory: image_gen
+    - query: coding AI agent new release
+      category: model_tech
+      subcategory: coding_agent
+    - query: AI world model simulation
+      category: model_tech
+      subcategory: world_model
+    - query: AI GPU chip announcement
+      category: industry
+      subcategory: gpu
+    - query: AI accelerator ASIC new
+      category: industry
+      subcategory: accelerator
+    - query: HBM memory AI demand
+      category: industry
+      subcategory: hbm
+    - query: AI data center construction
+      category: industry
+      subcategory: datacenter
+    - query: AI agent framework release
+      category: model_tech
+      subcategory: agent_framework
+    - query: computer use AI agent
+      category: model_tech
+      subcategory: computer_use
+    - query: MCP model context protocol
+      category: model_tech
+      subcategory: mcp
+    - query: A2A agent to agent protocol
+      category: model_tech
+      subcategory: a2a
+    - query: humanoid robot AI new
+      category: industry
+      subcategory: robotics
+    - query: embodied AI physical AI
+      category: industry
+      subcategory: embodied_ai
+    - query: AI safety alignment research
+      category: policy
+      subcategory: safety
+    - query: AI jailbreak vulnerability
+      category: policy
+      subcategory: security
+    - query: AI red team evaluation
+      category: policy
+      subcategory: evaluation
+    - query: AI startup series funding round
+      category: funding
+      subcategory: funding_rounds
+    - query: AI company valuation unicorn
+      category: funding
+      subcategory: valuation
+    - query: AI startup acquisition merger
+      category: funding
+      subcategory: ma
+    - query: AI venture capital investment trend
+      category: funding
+      subcategory: vc_trend
+    - query: AI IPO public offering 2026
+      category: funding
+      subcategory: ipo
+    - query: AI enterprise adoption case study
+      category: industry
+      subcategory: enterprise
+    - query: AI SaaS revenue growth
+      category: industry
+      subcategory: saas
+    - query: AI job impact hiring trend
+      category: industry
+      subcategory: jobs
+    - query: AI healthcare application new
+      category: industry
+      subcategory: healthcare
+    - query: AI education technology new
+      category: industry
+      subcategory: edtech
+    - query: AI cybersecurity new
+      category: industry
+      subcategory: security
+    - query: AI automotive autonomous driving
+      category: industry
+      subcategory: auto
+    - query: open source AI model new release
+      category: model_tech
+      subcategory: opensource
+    - query: HuggingFace trending model
+      category: model_tech
+      subcategory: huggingface
+    - query: AI inference optimization breakthrough
+      category: model_tech
+      subcategory: inference
+    - query: quantization AI model efficiency
+      category: model_tech
+      subcategory: quantization
+  - batch_id: hot_news
+    name: 热点新闻广谱搜索
+    description: 广谱搜索捕捉当日AI热点新闻
+    enabled: true
+    strategy: list
+    max_results: 10
+    depth: basic
+    queries:
+    - query: artificial intelligence news today
+      category: industry
+      subcategory: hot_general
+    - query: AI breakthrough news today
+      category: model_tech
+      subcategory: hot_breakthrough
+    - query: AI industry news today
+      category: industry
+      subcategory: hot_industry
+    - query: AI regulation news today
+      category: policy
+      subcategory: hot_policy
+    - query: AI funding news today
+      category: funding
+      subcategory: hot_funding
+    - query: AI research paper today
+      category: research
+      subcategory: hot_research
+    - query: generative AI latest news
+      category: model_tech
+      subcategory: hot_genai
+    - query: AI agent news today
+      category: model_tech
+      subcategory: hot_agent
+    - query: AI chip GPU news today
+      category: industry
+      subcategory: hot_chip
+    - query: AI robot news today
+      category: industry
+      subcategory: hot_robot
+  - batch_id: policy_regulation
+    name: 政策与监管搜索
+    description: 全球AI监管政策动态
+    enabled: true
+    strategy: list
+    max_results: 10
+    depth: basic
+    priority_domains:
+    - gov
+    - gov.cn
+    - gov.uk
+    - gov.au
+    - europa.eu
+    - cac.gov.cn
+    - cftc.gov
+    - sec.gov
+    queries:
+    - query: EU AI Act implementation update
+      category: policy
+      subcategory: eu
+    - query: US AI regulation executive order
+      category: policy
+      subcategory: us
+    - query: China AI regulation CAC 生成式AI
+      category: policy
+      subcategory: cn
+    - query: AI copyright lawsuit ruling
+      category: policy
+      subcategory: copyright
+    - query: AI watermark regulation
+      category: policy
+      subcategory: watermark
+    - query: AI chip export control update
+      category: policy
+      subcategory: export_control
+    - query: AI safety regulation global
+      category: policy
+      subcategory: safety_regulation
+    - query: UK AI safety institute
+      category: policy
+      subcategory: uk
+    - query: Japan AI regulation
+      category: policy
+      subcategory: jp
+  - batch_id: academic_research
+    name: 学术研究搜索
+    description: 重点机构的AI研究突破
+    enabled: true
+    strategy: list
+    max_results: 8
+    depth: advanced
+    priority_domains:
+    - arxiv.org
+    - nature.com
+    - science.org
+    - openreview.net
+    - blog.google
+    - deepmind.google
+    - openai.com
+    - anthropic.com
+    - meta.ai
+    - microsoft.com
+    - stanford.edu
+    - mit.edu
+    - cmu.edu
+    - berkeley.edu
+    queries:
+    - query: arXiv new AI paper LLM reasoning
+      category: research
+      subcategory: reasoning
+    - query: arXiv new AI paper agent planning
+      category: research
+      subcategory: agent
+    - query: arXiv new AI paper multimodal
+      category: research
+      subcategory: multimodal
+    - query: arXiv new AI paper reinforcement learning
+      category: research
+      subcategory: rl
+    - query: arXiv new AI paper robotics
+      category: research
+      subcategory: robotics
+    - query: arXiv new AI paper AI safety alignment
+      category: research
+      subcategory: safety
+    - query: arXiv new AI paper inference optimization
+      category: research
+      subcategory: inference
+    - query: arXiv new AI paper model compression distillation
+      category: research
+      subcategory: compression
+    - query: arXiv new AI paper training efficiency
+      category: research
+      subcategory: training
+  - batch_id: chinese_media
+    name: 中文媒体补充搜索
+    description: 中文AI科技媒体的补充检索
+    enabled: true
+    strategy: list
+    max_results: 10
+    depth: basic
+    language: zh
+    queries:
+    - query: AI 大模型 最新消息
+      category: model_tech
+      subcategory: cn_news
+    - query: 中国 AI 公司 融资
+      category: funding
+      subcategory: cn_funding
+    - query: AI 芯片 国产 最新
+      category: industry
+      subcategory: cn_chip
+    - query: 生成式AI 监管 政策 2026
+      category: policy
+      subcategory: cn_policy
+    - query: AI Agent 创业 最新
+      category: model_tech
+      subcategory: cn_agent
+    - query: AI 行业 动态 今日
+      category: industry
+      subcategory: cn_industry
+    - query: 大模型 应用 落地 最新
+      category: industry
+      subcategory: cn_application
+    - query: AI 创业公司 融资 最新
+      category: funding
+      subcategory: cn_startup
+    - query: AI 芯片 算力 新突破
+      category: industry
+      subcategory: cn_chip
+    - query: 中国 AI 政策 监管 最新
+      category: policy
+      subcategory: cn_policy
+    - query: AI 开源模型 最新发布
+      category: model_tech
+      subcategory: cn_opensource
+    - query: 具身智能 机器人 最新进展
+      category: industry
+      subcategory: cn_robotics
+    - query: AI 医疗 金融 应用
+      category: industry
+      subcategory: cn_vertical
+    - query: 智谱 月之暗面 MiniMax 最新
+      category: model_tech
+      subcategory: cn_models
+    - query: 百度 阿里 腾讯 AI 最新
+      category: industry
+      subcategory: cn_techgiant
+  filtering:
+    url_dedup: true
+    title_dedup: true
+    title_similarity_threshold: 0.85
+    min_content_length: 100
+    max_age_hours: 48
+  source_priority:
+    tier_sources:
+      tier1:
+      - openai.com
+      - anthropic.com
+      - deepmind.google
+      - meta.ai
+      - nvidia.com
+      - arxiv.org
+      - gov
+      - gov.cn
+      - sec.gov
+      tier2:
+      - reuters.com
+      - bloomberg.com
+      - ft.com
+      - wsj.com
+      - nature.com
+      - science.org
+      - technologyreview.com
+      tier3:
+      - techcrunch.com
+      - theverge.com
+      - wired.com
+      - arstechnica.com
+      - venturebeat.com
+    tier_weights:
+      tier1: 100
+      tier2: 80
+      tier3: 60
+      default: 40

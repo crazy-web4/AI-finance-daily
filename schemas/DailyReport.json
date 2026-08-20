@@ -1,0 +1,314 @@
+{
+  "$defs": {
+    "Category": {
+      "enum": [
+        "top_news",
+        "model_tech",
+        "funding",
+        "policy",
+        "research",
+        "industry"
+      ],
+      "title": "Category",
+      "type": "string"
+    },
+    "RemovedItem": {
+      "description": "被总编辑移除的条目及原因。",
+      "properties": {
+        "event_id": {
+          "title": "Event Id",
+          "type": "string"
+        },
+        "reason": {
+          "title": "Reason",
+          "type": "string"
+        },
+        "merged_into": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Merged Into"
+        }
+      },
+      "required": [
+        "event_id",
+        "reason"
+      ],
+      "title": "RemovedItem",
+      "type": "object"
+    },
+    "ReportItem": {
+      "description": "Agent-4 编辑好的日报条目。",
+      "properties": {
+        "item_id": {
+          "description": "条目ID，如 item_001",
+          "title": "Item Id",
+          "type": "string"
+        },
+        "event_id": {
+          "title": "Event Id",
+          "type": "string"
+        },
+        "rank": {
+          "description": "在所属栏目内的排名",
+          "minimum": 1,
+          "title": "Rank",
+          "type": "integer"
+        },
+        "category": {
+          "$ref": "#/$defs/Category"
+        },
+        "title": {
+          "description": "条目标题",
+          "title": "Title",
+          "type": "string"
+        },
+        "lead": {
+          "description": "导语，2-3句话",
+          "title": "Lead",
+          "type": "string"
+        },
+        "key_data": {
+          "items": {
+            "$ref": "#/$defs/ReportKeyData"
+          },
+          "title": "Key Data",
+          "type": "array"
+        },
+        "details": {
+          "description": "事件详情，1-2段",
+          "title": "Details",
+          "type": "string"
+        },
+        "analysis": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "行业影响/编辑判断",
+          "title": "Analysis"
+        },
+        "sources": {
+          "items": {
+            "$ref": "#/$defs/ReportSource"
+          },
+          "title": "Sources",
+          "type": "array"
+        },
+        "word_count": {
+          "description": "正文字数统计",
+          "minimum": 0,
+          "title": "Word Count",
+          "type": "integer"
+        },
+        "edited_at": {
+          "format": "date-time",
+          "title": "Edited At",
+          "type": "string"
+        }
+      },
+      "required": [
+        "item_id",
+        "event_id",
+        "rank",
+        "category",
+        "title",
+        "lead",
+        "details",
+        "word_count"
+      ],
+      "title": "ReportItem",
+      "type": "object"
+    },
+    "ReportKeyData": {
+      "description": "日报条目中的关键数据。",
+      "properties": {
+        "label": {
+          "description": "数据项标签，如 '发布时间'、'融资额'",
+          "title": "Label",
+          "type": "string"
+        },
+        "value": {
+          "description": "数值/内容",
+          "title": "Value",
+          "type": "string"
+        },
+        "source_indexes": {
+          "items": {
+            "type": "integer"
+          },
+          "title": "Source Indexes",
+          "type": "array"
+        }
+      },
+      "required": [
+        "label",
+        "value"
+      ],
+      "title": "ReportKeyData",
+      "type": "object"
+    },
+    "ReportSection": {
+      "description": "日报的一个栏目。",
+      "properties": {
+        "section_id": {
+          "$ref": "#/$defs/Category"
+        },
+        "section_name": {
+          "title": "Section Name",
+          "type": "string"
+        },
+        "item_count": {
+          "title": "Item Count",
+          "type": "integer"
+        },
+        "items": {
+          "items": {
+            "$ref": "#/$defs/ReportItem"
+          },
+          "title": "Items",
+          "type": "array"
+        }
+      },
+      "required": [
+        "section_id",
+        "section_name",
+        "item_count"
+      ],
+      "title": "ReportSection",
+      "type": "object"
+    },
+    "ReportSource": {
+      "description": "日报条目中的来源。",
+      "properties": {
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "url": {
+          "format": "uri",
+          "maxLength": 2083,
+          "minLength": 1,
+          "title": "Url",
+          "type": "string"
+        },
+        "is_official": {
+          "default": false,
+          "title": "Is Official",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "name",
+        "url"
+      ],
+      "title": "ReportSource",
+      "type": "object"
+    }
+  },
+  "description": "最终日报数据结构。\n这是整个流水线的核心产出，直接喂给 PDF 渲染器。",
+  "properties": {
+    "report_id": {
+      "description": "日报ID，如 daily_20260819",
+      "title": "Report Id",
+      "type": "string"
+    },
+    "report_date": {
+      "description": "报告日期，格式 YYYY-MM-DD",
+      "title": "Report Date",
+      "type": "string"
+    },
+    "time_window_start": {
+      "description": "数据时间窗口起点",
+      "format": "date-time",
+      "title": "Time Window Start",
+      "type": "string"
+    },
+    "time_window_end": {
+      "description": "数据时间窗口终点",
+      "format": "date-time",
+      "title": "Time Window End",
+      "type": "string"
+    },
+    "total_items": {
+      "description": "总条目数",
+      "minimum": 0,
+      "title": "Total Items",
+      "type": "integer"
+    },
+    "total_word_count": {
+      "description": "总字数",
+      "minimum": 0,
+      "title": "Total Word Count",
+      "type": "integer"
+    },
+    "editor_summary": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "今日导读 / 卷首语（可选，100-200字）",
+      "title": "Editor Summary"
+    },
+    "sections": {
+      "description": "六大栏目，按固定顺序排列",
+      "items": {
+        "$ref": "#/$defs/ReportSection"
+      },
+      "title": "Sections",
+      "type": "array"
+    },
+    "removed_items": {
+      "items": {
+        "$ref": "#/$defs/RemovedItem"
+      },
+      "title": "Removed Items",
+      "type": "array"
+    },
+    "quality_flags": {
+      "description": "质量问题标记，供人工复核",
+      "items": {
+        "type": "string"
+      },
+      "title": "Quality Flags",
+      "type": "array"
+    },
+    "generated_at": {
+      "format": "date-time",
+      "title": "Generated At",
+      "type": "string"
+    },
+    "version": {
+      "default": "1.0.0",
+      "description": "日报格式版本",
+      "title": "Version",
+      "type": "string"
+    }
+  },
+  "required": [
+    "report_id",
+    "report_date",
+    "time_window_start",
+    "time_window_end",
+    "total_items",
+    "total_word_count"
+  ],
+  "title": "DailyReport",
+  "type": "object"
+}

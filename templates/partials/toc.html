@@ -1,0 +1,29 @@
+<!-- 目录页 -->
+<section class="toc-page">
+  <h1 class="toc-title">目 录</h1>
+  <div class="toc-divider"></div>
+  <ul class="toc-list">
+    {% for section in sections %}
+    {% if section.item_count > 0 %}
+    <li class="toc-section">
+      <a href="#section-{{ section.section_id }}" class="toc-section-link">
+        <span class="toc-number">{{ "%02d"|format(loop.index) }}</span>
+        <span class="toc-section-name">{{ section.section_name }}</span>
+        <span class="toc-dots"></span>
+        <span class="toc-count">{{ section.item_count }} 条</span>
+      </a>
+      <ul class="toc-items">
+        {% for item in section.article_list %}
+        <li class="toc-item">
+          <a href="#item-{{ item.item_id }}" class="toc-item-link">
+            <span class="toc-item-num">{{ "%02d"|format(item.rank) }}</span>
+            <span class="toc-item-title">{{ item.title }}</span>
+          </a>
+        </li>
+        {% endfor %}
+      </ul>
+    </li>
+    {% endif %}
+    {% endfor %}
+  </ul>
+</section>

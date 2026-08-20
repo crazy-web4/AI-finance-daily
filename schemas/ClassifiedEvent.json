@@ -1,0 +1,162 @@
+{
+  "$defs": {
+    "Category": {
+      "enum": [
+        "top_news",
+        "model_tech",
+        "funding",
+        "policy",
+        "research",
+        "industry"
+      ],
+      "title": "Category",
+      "type": "string"
+    },
+    "ImportanceBreakdown": {
+      "description": "重要性评分的分项明细。",
+      "properties": {
+        "global_impact": {
+          "description": "全球影响力 (30%)",
+          "maximum": 100,
+          "minimum": 0,
+          "title": "Global Impact",
+          "type": "integer"
+        },
+        "tech_breakthrough": {
+          "description": "技术突破性 (20%)",
+          "maximum": 100,
+          "minimum": 0,
+          "title": "Tech Breakthrough",
+          "type": "integer"
+        },
+        "business_impact": {
+          "description": "商业影响 (20%)",
+          "maximum": 100,
+          "minimum": 0,
+          "title": "Business Impact",
+          "type": "integer"
+        },
+        "policy_impact": {
+          "description": "政策影响 (15%)",
+          "maximum": 100,
+          "minimum": 0,
+          "title": "Policy Impact",
+          "type": "integer"
+        },
+        "market_impact": {
+          "description": "市场影响 (10%)",
+          "maximum": 100,
+          "minimum": 0,
+          "title": "Market Impact",
+          "type": "integer"
+        },
+        "credibility": {
+          "description": "信息可信度 (5%)",
+          "maximum": 100,
+          "minimum": 0,
+          "title": "Credibility",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "global_impact",
+        "tech_breakthrough",
+        "business_impact",
+        "policy_impact",
+        "market_impact",
+        "credibility"
+      ],
+      "title": "ImportanceBreakdown",
+      "type": "object"
+    }
+  },
+  "description": "Agent-3 分类后的事件。",
+  "properties": {
+    "event_id": {
+      "title": "Event Id",
+      "type": "string"
+    },
+    "category": {
+      "$ref": "#/$defs/Category"
+    },
+    "category_confidence": {
+      "maximum": 1.0,
+      "minimum": 0.0,
+      "title": "Category Confidence",
+      "type": "number"
+    },
+    "is_top_news": {
+      "default": false,
+      "description": "是否入选今日头条",
+      "title": "Is Top News",
+      "type": "boolean"
+    },
+    "top_news_rank": {
+      "anyOf": [
+        {
+          "maximum": 10,
+          "minimum": 1,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "今日头条内排名",
+      "title": "Top News Rank"
+    },
+    "importance_score": {
+      "description": "综合重要性评分",
+      "maximum": 100,
+      "minimum": 0,
+      "title": "Importance Score",
+      "type": "integer"
+    },
+    "importance_breakdown": {
+      "$ref": "#/$defs/ImportanceBreakdown"
+    },
+    "topics": {
+      "description": "话题标签，2-5个",
+      "items": {
+        "type": "string"
+      },
+      "title": "Topics",
+      "type": "array"
+    },
+    "companies_mentioned": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Companies Mentioned",
+      "type": "array"
+    },
+    "geography": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "主要地域: us/cn/eu/uk/jp/global",
+      "title": "Geography"
+    },
+    "classified_at": {
+      "format": "date-time",
+      "title": "Classified At",
+      "type": "string"
+    }
+  },
+  "required": [
+    "event_id",
+    "category",
+    "category_confidence",
+    "importance_score",
+    "importance_breakdown"
+  ],
+  "title": "ClassifiedEvent",
+  "type": "object"
+}

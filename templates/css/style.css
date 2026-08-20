@@ -1,0 +1,337 @@
+/* ============================================================
+   AI 行业全球动态日报 —— 样式
+   参考样例排版风格
+   ============================================================ */
+
+/* 字体 */
+@font-face {
+  font-family: 'Noto Sans SC';
+  font-weight: 400;
+  src: url('../../fonts/NotoSansSC-Regular.otf') format('opentype');
+}
+@font-face {
+  font-family: 'Noto Sans SC';
+  font-weight: 700;
+  src: url('../../fonts/NotoSansSC-Bold.otf') format('opentype');
+}
+@font-face {
+  font-family: 'Noto Serif SC';
+  font-weight: 700;
+  src: url('../../fonts/NotoSerifSC-Bold.otf') format('opentype');
+}
+
+/* 页面 */
+@page {
+  size: A4;
+  margin: 18mm 18mm 15mm 18mm;
+
+  @bottom-left {
+    content: "推送人：广明 · 微信：Cyber_Gm · 欢迎转发，加微信进群订阅每日日报";
+    font-family: 'Noto Sans SC', sans-serif;
+    font-size: 8pt;
+    color: #999;
+  }
+
+  @bottom-right {
+    content: "第 " counter(page) " 页";
+    font-family: 'Noto Sans SC', sans-serif;
+    font-size: 8pt;
+    color: #999;
+  }
+}
+
+@page :first {
+  margin-top: 12mm;
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: 'Noto Sans SC', -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+  font-size: 10.5pt;
+  line-height: 1.75;
+  color: #333;
+  background: #fff;
+  position: relative;
+}
+
+/* 水印 */
+body::before {
+  content: attr(data-watermark);
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%) rotate(-45deg);
+  font-family: 'Noto Serif SC', serif;
+  font-size: 140pt;
+  font-weight: 700;
+  color: rgba(200, 180, 160, 0.05);
+  white-space: nowrap;
+  pointer-events: none;
+  z-index: 0;
+  letter-spacing: 0.2em;
+}
+
+/* 顶部欢迎条 */
+.top-bar {
+  text-align: center;
+  font-size: 9.5pt;
+  color: #666;
+  margin-bottom: 6mm;
+  position: relative;
+  z-index: 1;
+}
+
+/* 报头 */
+.report-header {
+  text-align: center;
+  margin-bottom: 6mm;
+  position: relative;
+  z-index: 1;
+}
+
+.report-title {
+  font-family: 'Noto Sans SC', sans-serif;
+  font-size: 24pt;
+  font-weight: 700;
+  color: #1a365d;
+  letter-spacing: 0.15em;
+  margin-bottom: 2mm;
+}
+
+.title-line {
+  width: 100%;
+  height: 2.5px;
+  background: #1a365d;
+  margin: 2mm auto 3mm auto;
+}
+
+.report-meta {
+  font-size: 10.5pt;
+  color: #666;
+  margin-bottom: 4mm;
+  letter-spacing: 0.05em;
+}
+
+/* 本期导语 */
+.editor-summary-section {
+  text-align: left;
+  font-size: 10.5pt;
+  line-height: 1.8;
+  color: #444;
+  padding: 3mm 4mm;
+  background: #f7f8fa;
+  border-left: 3px solid #1a365d;
+  margin: 0 0 5mm 0;
+}
+
+.summary-label {
+  font-weight: 700;
+  color: #1a365d;
+}
+
+.summary-text {
+  color: #444;
+}
+
+/* 目录 */
+.toc-section {
+  margin-bottom: 5mm;
+  position: relative;
+  z-index: 1;
+}
+
+.toc-title-text {
+  text-align: center;
+  font-size: 14pt;
+  font-weight: 700;
+  color: #c0392b;
+  margin-bottom: 4mm;
+  letter-spacing: 0.5em;
+  font-family: 'Noto Serif SC', serif;
+}
+
+.toc-simple {
+  list-style: none;
+  max-width: 160mm;
+  margin: 0 auto;
+  padding: 0;
+}
+
+.toc-simple li {
+  padding: 2mm 0;
+  font-size: 11pt;
+}
+
+.toc-simple a {
+  display: flex;
+  align-items: baseline;
+  text-decoration: none;
+  color: inherit;
+}
+
+.toc-cn-num {
+  font-weight: 600;
+  color: #1a365d;
+  margin-right: 3mm;
+  flex-shrink: 0;
+}
+
+.toc-cn-name {
+  font-weight: 600;
+  color: #1a365d;
+  flex-shrink: 0;
+}
+
+.toc-dots {
+  flex: 1;
+  color: #999;
+  letter-spacing: 2px;
+  margin: 0 3mm;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.toc-page {
+  color: #666;
+  flex-shrink: 0;
+  font-weight: 500;
+}
+
+/* 红色分隔线 */
+.section-divider-red {
+  height: 3px;
+  background: linear-gradient(90deg, #c0392b 0%, #e74c3c 30%, #f39c12 60%, #27ae60 100%);
+  margin: 4mm 0;
+  position: relative;
+  z-index: 1;
+}
+
+/* 正文栏目 */
+.content-section {
+  margin-bottom: 6mm;
+  position: relative;
+  z-index: 1;
+}
+
+.section-heading {
+  font-size: 15pt;
+  font-weight: 700;
+  color: #c0392b;
+  margin: 5mm 0 3mm 0;
+  padding-bottom: 1.5mm;
+  border-bottom: 1px solid #eee;
+  display: flex;
+  align-items: baseline;
+  page-break-after: avoid;
+}
+
+.cn-num {
+  margin-right: 2mm;
+  font-family: 'Noto Serif SC', serif;
+}
+
+.section-name-text {
+  color: #c0392b;
+}
+
+/* 新闻条目 */
+.news-article {
+  margin-bottom: 5mm;
+  padding-bottom: 4mm;
+  border-bottom: 1px dashed #e0e0e0;
+}
+
+
+.news-article:last-child {
+  border-bottom: none;
+  margin-bottom: 0;
+  padding-bottom: 0;
+}
+
+.article-title {
+  font-size: 12pt;
+  font-weight: 700;
+  color: #2c3e50;
+  line-height: 1.5;
+  margin-bottom: 2mm;
+  display: flex;
+  align-items: baseline;
+}
+
+.article-num {
+  font-weight: 700;
+  color: #2980b9;
+  margin-right: 2mm;
+  flex-shrink: 0;
+}
+
+.article-body {
+  font-size: 10.5pt;
+  line-height: 1.8;
+  color: #333;
+  text-align: justify;
+  margin-bottom: 2mm;
+  text-indent: 0;
+}
+
+.article-analysis {
+  font-size: 10pt;
+  color: #555;
+  line-height: 1.7;
+  padding: 2mm 3mm;
+  background: #fef9e7;
+  border-left: 2px solid #f39c12;
+  margin-bottom: 2mm;
+}
+
+/* 来源引用 */
+.article-sources {
+  font-size: 8.5pt;
+  color: #888;
+  line-height: 1.7;
+}
+
+.sources-label {
+  font-weight: 600;
+  color: #666;
+  margin-bottom: 1mm;
+  font-size: 9pt;
+}
+
+.source-item {
+  display: flex;
+  align-items: baseline;
+  padding: 0.5mm 0;
+}
+
+.source-num {
+  color: #2980b9;
+  font-weight: 600;
+  margin-right: 2mm;
+  flex-shrink: 0;
+}
+
+.source-name {
+  color: #555;
+  margin-right: 2mm;
+  flex-shrink: 0;
+}
+
+.source-url {
+  color: #aaa;
+  font-family: monospace;
+  font-size: 8pt;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 页脚 */
+.page-footer-bottom {
+  display: none;
+}

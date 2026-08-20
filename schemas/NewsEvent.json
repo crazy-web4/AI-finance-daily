@@ -1,0 +1,132 @@
+{
+  "$defs": {
+    "EventType": {
+      "enum": [
+        "model_release",
+        "model_update",
+        "api_launch",
+        "funding_round",
+        "acquisition",
+        "partnership",
+        "policy_change",
+        "regulation_update",
+        "research_breakthrough",
+        "product_launch",
+        "chip_hardware",
+        "datacenter_infra",
+        "company_strategy",
+        "lawsuit_legal",
+        "market_data",
+        "safety_security",
+        "other"
+      ],
+      "title": "EventType",
+      "type": "string"
+    }
+  },
+  "description": "聚类后的事件。\n多篇文章描述同一事件 → 一个 NewsEvent。",
+  "properties": {
+    "event_id": {
+      "description": "事件唯一ID",
+      "title": "Event Id",
+      "type": "string"
+    },
+    "canonical_title": {
+      "description": "代表性标题（从多篇中选最优）",
+      "title": "Canonical Title",
+      "type": "string"
+    },
+    "article_ids": {
+      "description": "关联的文章ID列表",
+      "items": {
+        "type": "string"
+      },
+      "title": "Article Ids",
+      "type": "array"
+    },
+    "article_count": {
+      "description": "关联文章数量",
+      "title": "Article Count",
+      "type": "integer"
+    },
+    "event_type_guess": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/EventType"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "earliest_published_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Earliest Published At"
+    },
+    "latest_published_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Latest Published At"
+    },
+    "source_domains": {
+      "default": [],
+      "items": {
+        "type": "string"
+      },
+      "title": "Source Domains",
+      "type": "array"
+    },
+    "companies_mentioned": {
+      "default": [],
+      "items": {
+        "type": "string"
+      },
+      "title": "Companies Mentioned",
+      "type": "array"
+    },
+    "cluster_score": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "聚类置信度（0~1），越高表示组内文章越相关",
+      "title": "Cluster Score"
+    },
+    "created_at": {
+      "format": "date-time",
+      "title": "Created At",
+      "type": "string"
+    }
+  },
+  "required": [
+    "event_id",
+    "canonical_title",
+    "article_ids",
+    "article_count"
+  ],
+  "title": "NewsEvent",
+  "type": "object"
+}

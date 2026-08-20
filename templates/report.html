@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>{{ report_title }} · {{ report_date }}</title>
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body data-watermark="{{ watermark_text }}">
+
+<!-- 顶部欢迎条 -->
+<div class="top-bar">
+  欢迎多多转发 · 添加微信：{{ wechat_id }} 进群，订阅每日晚间日报
+</div>
+
+<!-- 报头 -->
+<header class="report-header">
+  <h1 class="report-title">{{ report_title }}</h1>
+  <div class="title-line"></div>
+  <div class="report-meta">
+    {{ report_date_cn }} · 模型发布 · 资本动态 · 政策监管 · 学术科研 · 产品上线
+  </div>
+
+  {% if editor_summary %}
+  <div class="editor-summary-section">
+    <span class="summary-label">本期导语：</span>
+    <span class="summary-text">{{ editor_summary }}</span>
+  </div>
+  {% endif %}
+</header>
+
+<!-- 目录 -->
+<div class="toc-section">
+  <h2 class="toc-title-text">目 录</h2>
+  <ul class="toc-simple">
+    {% for section in sections %}
+    {% if section.item_count > 0 %}
+    <li>
+      <a href="#section-{{ section.section_id }}">
+        <span class="toc-cn-num">{{ loop.index | replace('1', '一') | replace('2', '二') | replace('3', '三') | replace('4', '四') | replace('5', '五') | replace('6', '六') }}</span>
+        <span class="toc-cn-name">{{ section.section_name }}</span>
+        <span class="toc-dots">………………………………………………………………………………………………</span>
+        <span class="toc-page">{{ section._page_num if section._page_num else loop.index + 1 }}</span>
+      </a>
+    </li>
+    {% endif %}
+    {% endfor %}
+  </ul>
+</div>
+
+<!-- 红色分隔线 -->
+<div class="section-divider-red"></div>
+
+<!-- 正文：六大栏目 -->
+{% for section in sections %}
+{% if section.item_count > 0 %}
+<section class="content-section" id="section-{{ section.section_id }}">
+
+  <h2 class="section-heading">
+    <span class="cn-num">
+      {% if loop.index == 1 %}一{% elif loop.index == 2 %}二{% elif loop.index == 3 %}三{% elif loop.index == 4 %}四{% elif loop.index == 5 %}五{% elif loop.index == 6 %}六{% endif %}
+    </span>
+    <span class="section-name-text">{{ section.section_name }}</span>
+  </h2>
+
+  {% for item in section.article_list %}
+  <article class="news-article" id="item-{{ item.item_id }}">
+    <h3 class="article-title">
+      <span class="article-num">{{ item.rank }}.</span>
+      {{ item.title }}
+    </h3>
+
+    <div class="article-body">
+      {{ item.details }}
+    </div>
+
+    {% if item.analysis %}
+    <div class="article-analysis">
+      {{ item.analysis }}
+    </div>
+    {% endif %}
+
+    {% if item.sources and item.sources|length > 0 %}
+    <div class="article-sources">
+      <div class="sources-label">引用链接</div>
+      {% for src in item.sources %}
+      <div class="source-item">
+        <span class="source-num">[{{ loop.index }}]</span>
+        <span class="source-name">{{ src.name }}</span>
+        <span class="source-url">{{ src.url }}</span>
+      </div>
+      {% endfor %}
+    </div>
+    {% endif %}
+  </article>
+  {% endfor %}
+
+</section>
+{% endif %}
+{% endfor %}
+
+<!-- 页脚（由 @page 控制，这里放最后一页底部用） -->
+<div class="page-footer-bottom">
+  <span class="footer-left">推送人：{{ editor_name }} · 微信：{{ wechat_id }} · 欢迎转发，加微信进群订阅每日日报</span>
+</div>
+
+</body>
+</html>
