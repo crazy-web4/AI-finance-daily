@@ -11,10 +11,10 @@
       "type": "string"
     }
   },
-  "description": "归一化后的原始新闻文章。",
+  "description": "归一化后的原始新闻文章（单一事实源，采集/聚类/分析共用）。",
   "properties": {
     "article_id": {
-      "description": "文章唯一ID（sha256(url)前12位）",
+      "description": "文章唯一ID（sha256(归一化url)前12位）",
       "title": "Article Id",
       "type": "string"
     },
@@ -46,8 +46,14 @@
       "title": "Source Name"
     },
     "content": {
+      "default": "",
       "description": "正文内容，纯文本",
       "title": "Content",
+      "type": "string"
+    },
+    "snippet": {
+      "default": "",
+      "title": "Snippet",
       "type": "string"
     },
     "summary": {
@@ -61,6 +67,19 @@
       ],
       "default": null,
       "title": "Summary"
+    },
+    "category": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "业务分类标签（来自查询打标）",
+      "title": "Category"
     },
     "published_at": {
       "anyOf": [
@@ -143,6 +162,12 @@
     "source_reliability": {
       "$ref": "#/$defs/SourceReliability",
       "default": "unknown"
+    },
+    "result_count": {
+      "default": 1,
+      "description": "在多少条查询中出现",
+      "title": "Result Count",
+      "type": "integer"
     }
   },
   "required": [
@@ -150,7 +175,6 @@
     "title",
     "url",
     "source_domain",
-    "content",
     "fetched_at"
   ],
   "title": "RawNewsArticle",

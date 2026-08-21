@@ -4,9 +4,6 @@ search_strategy:
   defaults:
     time_window_hours: 24
     max_results_per_query: 10
-    depth: basic
-    language: en,zh
-    concurrency: 8
     dedup_by_url: true
   batches:
   - batch_id: company_events
@@ -16,7 +13,6 @@ search_strategy:
     strategy: cartesian
     template: '{company} {event}'
     max_results: 8
-    depth: basic
     companies:
     - name: OpenAI
       weight: 10
@@ -213,7 +209,6 @@ search_strategy:
     enabled: true
     strategy: list
     max_results: 10
-    depth: basic
     queries:
     - query: LLM new model release
       category: model_tech
@@ -329,7 +324,6 @@ search_strategy:
     enabled: true
     strategy: list
     max_results: 10
-    depth: basic
     queries:
     - query: artificial intelligence news today
       category: industry
@@ -367,16 +361,6 @@ search_strategy:
     enabled: true
     strategy: list
     max_results: 10
-    depth: basic
-    priority_domains:
-    - gov
-    - gov.cn
-    - gov.uk
-    - gov.au
-    - europa.eu
-    - cac.gov.cn
-    - cftc.gov
-    - sec.gov
     queries:
     - query: EU AI Act implementation update
       category: policy
@@ -411,22 +395,6 @@ search_strategy:
     enabled: true
     strategy: list
     max_results: 8
-    depth: advanced
-    priority_domains:
-    - arxiv.org
-    - nature.com
-    - science.org
-    - openreview.net
-    - blog.google
-    - deepmind.google
-    - openai.com
-    - anthropic.com
-    - meta.ai
-    - microsoft.com
-    - stanford.edu
-    - mit.edu
-    - cmu.edu
-    - berkeley.edu
     queries:
     - query: arXiv new AI paper LLM reasoning
       category: research
@@ -461,8 +429,6 @@ search_strategy:
     enabled: true
     strategy: list
     max_results: 10
-    depth: basic
-    language: zh
     queries:
     - query: AI 大模型 最新消息
       category: model_tech
@@ -513,36 +479,5 @@ search_strategy:
     url_dedup: true
     title_dedup: true
     title_similarity_threshold: 0.85
-    min_content_length: 100
+    min_content_length: 0
     max_age_hours: 48
-  source_priority:
-    tier_sources:
-      tier1:
-      - openai.com
-      - anthropic.com
-      - deepmind.google
-      - meta.ai
-      - nvidia.com
-      - arxiv.org
-      - gov
-      - gov.cn
-      - sec.gov
-      tier2:
-      - reuters.com
-      - bloomberg.com
-      - ft.com
-      - wsj.com
-      - nature.com
-      - science.org
-      - technologyreview.com
-      tier3:
-      - techcrunch.com
-      - theverge.com
-      - wired.com
-      - arstechnica.com
-      - venturebeat.com
-    tier_weights:
-      tier1: 100
-      tier2: 80
-      tier3: 60
-      default: 40

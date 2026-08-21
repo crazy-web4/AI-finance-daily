@@ -8,15 +8,13 @@ JSON Schema 数据模型（接口编号: IF-004）
          ↓
   NewsEvent             事件（去重聚类后，多对一文章→事件）
          ↓
-  ResearchEvent         Agent-1 研究员输出
+  ReportItem            Analyst 编辑输出（V1 合并研究/核查/分类职责，
+                        事实核查见 app/agents/factcheck.py）
          ↓
-  FactCheckedEvent      Agent-2 事实核查输出
-         ↓
-  ClassifiedEvent       Agent-3 分类器输出
-         ↓
-  ReportItem            Agent-4 编辑输出
-         ↓
-  DailyReport           Agent-5 总编辑输出（最终产物）
+  DailyReport           总编辑输出（最终产物）
+
+注: prompts/01~05 的五角色拆分（ResearchEvent/FactCheckedEvent/ClassifiedEvent）
+为设计稿，V1 未启用；相关模型已于第 4 批清理（见 架构评审与优化计划.md #14）。
 
 所有模型使用 Pydantic v2，自动生成 JSON Schema。
 用 `python -m app.schemas.models --generate` 可导出全部 JSON Schema。
@@ -120,20 +118,58 @@ class SearchResultItem(BaseModel):
     score: float | None = None
     query_origin: str | None = None
 
+    @classmethod
+    def make_id(cls, url: str, title: str) -> str:
+        seed = f"{url}|{title}".lower()
+        return "res_" + hashlib.sha256(seed.encode()).hexdigest()[:12]
+
 
 # ═══════════════════════════════════════════════════════
 # L2: 原始新闻（归一化后）
 # ═══════════════════════════════════════════════════════
 
+def normalize_url(url: str) -> str:
+    """
+    URL 归一化（用于去重与文章ID）:
+    小写 scheme/netloc、去 fragment、去追踪参数(utm_*/fbclid/...)、去末尾斜杠。
+    """
+    from urllib.parse import urlparse, urlunparse
+    try:
+        parsed = urlparse(url)
+    except Exception:
+        return url
+    query_params = []
+    if parsed.query:
+        for pair in parsed.query.split("&"):
+            if not pair:
+                continue
+            key = pair.split("=")[0].lower()
+            if key.startswith("utm_") or key in (
+                "fbclid", "gclid", "ref", "ref_src", "referrer", "mc_cid", "mc_eid",
+            ):
+                continue
+            query_params.append(pair)
+    return urlunparse((
+        parsed.scheme.lower(),
+        parsed.netloc.lower(),
+        parsed.path.rstrip("/") or "/",
+        parsed.params,
+        "&".join(query_params),
+        "",
+    ))
+
+
 class RawNewsArticle(BaseModel):
-    """归一化后的原始新闻文章。"""
-    article_id: str = Field(..., description="文章唯一ID（sha256(url)前12位）")
+    """归一化后的原始新闻文章（单一事实源，采集/聚类/分析共用）。"""
+    article_id: str = Field(..., description="文章唯一ID（sha256(归一化url)前12位）")
     title: str
     url: HttpUrl
     source_domain: str
     source_name: str | None = None
-    content: str = Field(..., description="正文内容，纯文本")
+    content: str = Field(default="", description="正文内容，纯文本")
+    snippet: str = ""
     summary: str | None = None
+    category: str | None = Field(default=None, description="业务分类标签（来自查询打标）")
     published_at: datetime | None = None
     fetched_at: datetime
     language: str | None = None
@@ -142,10 +178,11 @@ class RawNewsArticle(BaseModel):
     search_query: str | None = None
     search_batch: str | None = None
     source_reliability: SourceReliability = SourceReliability.UNKNOWN
+    result_count: int = Field(default=1, description="在多少条查询中出现")
 
     @classmethod
     def make_id(cls, url: str) -> str:
-        return "art_" + hashlib.sha256(url.encode()).hexdigest()[:12]
+        return "art_" + hashlib.sha256(normalize_url(url).encode()).hexdigest()[:12]
 
 
 # ═══════════════════════════════════════════════════════
@@ -191,104 +228,6 @@ class KeyDataPoint(BaseModel):
         default_factory=list,
         description="支撑该数据的来源索引（对应 sources 数组的下标）",
     )
-
-
-class SourceRef(BaseModel):
-    """来源引用。"""
-    title: str
-    url: HttpUrl
-    source_domain: str
-    source_name: str | None = None
-    published_at: datetime | None = None
-    reliability: SourceReliability = SourceReliability.UNKNOWN
-    is_official: bool = Field(default=False, description="是否官方一手来源")
-
-
-class ResearchEvent(BaseModel):
-    """Agent-1 研究员输出的结构化事件。"""
-    event_id: str
-    is_valid: bool = Field(..., description="是否为有效AI事件")
-    invalid_reason: str | None = None
-    title: str = Field(..., description="事件标题（一句话概括）")
-    event_type: EventType
-    summary: str = Field(..., description="2-3句话的事件摘要")
-    companies: list[str] = Field(default_factory=list, description="涉及的公司/机构")
-    persons: list[str] = Field(default_factory=list, description="涉及的关键人物")
-    key_data: list[KeyDataPoint] = Field(default_factory=list)
-    facts: list[str] = Field(default_factory=list, description="核心事实列表，3-8条")
-    sources: list[SourceRef] = Field(default_factory=list)
-    confidence: float = Field(..., ge=0.0, le=1.0, description="整体置信度")
-    confidence_reason: str | None = None
-    importance_preliminary: int = Field(..., ge=0, le=100, description="初步重要性评分")
-    published_at: datetime | None = None
-    processed_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-
-
-# ═══════════════════════════════════════════════════════
-# L5: Agent-2 事实核查输出
-# ═══════════════════════════════════════════════════════
-
-class FactCheckIssue(BaseModel):
-    """核查发现的问题。"""
-    severity: str = Field(..., pattern="^(critical|warning|info)$")
-    category: str = Field(..., description="所属核查类别: time/numbers/entities/sources/logic")
-    description: str = Field(..., description="问题描述")
-    fact_key: str | None = Field(default=None, description="关联的事实项 key（如有）")
-    suggested_action: str | None = Field(default=None, description="建议处理方式")
-
-
-class FactCheckCategoryResult(BaseModel):
-    """每个核查类别的结果。"""
-    category: str
-    passed: bool
-    issues: list[FactCheckIssue] = Field(default_factory=list)
-    confidence: float = Field(ge=0.0, le=1.0)
-
-
-class FactCheckedEvent(BaseModel):
-    """Agent-2 事实核查后的事件。"""
-    event_id: str
-    passed: bool = Field(..., description="是否通过核查")
-    overall_score: float = Field(..., ge=0.0, le=1.0, description="整体核查分数")
-    checks: list[FactCheckCategoryResult] = Field(default_factory=list)
-    critical_issues: list[FactCheckIssue] = Field(default_factory=list)
-    minor_issues: list[FactCheckIssue] = Field(default_factory=list)
-    final_confidence: float = Field(..., ge=0.0, le=1.0, description="最终置信度（核查后）")
-    recommendation: FactCheckRecommendation
-    corrected_event: ResearchEvent | None = Field(
-        default=None,
-        description="修正后的事件（当 recommendation=revise 时填充）",
-    )
-    checked_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-
-
-# ═══════════════════════════════════════════════════════
-# L6: Agent-3 分类器输出
-# ═══════════════════════════════════════════════════════
-
-class ImportanceBreakdown(BaseModel):
-    """重要性评分的分项明细。"""
-    global_impact: int = Field(ge=0, le=100, description="全球影响力 (30%)")
-    tech_breakthrough: int = Field(ge=0, le=100, description="技术突破性 (20%)")
-    business_impact: int = Field(ge=0, le=100, description="商业影响 (20%)")
-    policy_impact: int = Field(ge=0, le=100, description="政策影响 (15%)")
-    market_impact: int = Field(ge=0, le=100, description="市场影响 (10%)")
-    credibility: int = Field(ge=0, le=100, description="信息可信度 (5%)")
-
-
-class ClassifiedEvent(BaseModel):
-    """Agent-3 分类后的事件。"""
-    event_id: str
-    category: Category
-    category_confidence: float = Field(ge=0.0, le=1.0)
-    is_top_news: bool = Field(default=False, description="是否入选今日头条")
-    top_news_rank: int | None = Field(default=None, ge=1, le=10, description="今日头条内排名")
-    importance_score: int = Field(ge=0, le=100, description="综合重要性评分")
-    importance_breakdown: ImportanceBreakdown
-    topics: list[str] = Field(default_factory=list, description="话题标签，2-5个")
-    companies_mentioned: list[str] = Field(default_factory=list)
-    geography: str | None = Field(default=None, description="主要地域: us/cn/eu/uk/jp/global")
-    classified_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
 # ═══════════════════════════════════════════════════════
@@ -396,9 +335,6 @@ ALL_MODELS: list[type[BaseModel]] = [
     SearchResultItem,
     RawNewsArticle,
     NewsEvent,
-    ResearchEvent,
-    FactCheckedEvent,
-    ClassifiedEvent,
     ReportItem,
     DailyReport,
 ]

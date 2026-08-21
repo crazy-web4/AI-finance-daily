@@ -51,6 +51,12 @@ async def collect_articles(test_mode: bool, max_per_batch: int = 0, tavily_n: in
 
     api_key = load_api_key()
     strategy = load_strategy()
+    # 架构评审 #13: 时效窗口与过滤阈值改由 yaml 配置驱动
+    ss = strategy["search_strategy"]
+    time_window = ss["defaults"].get("time_window_hours", 24)
+    filtering = ss.get("filtering", {})
+    # max_age_hours 优先用 filtering 配置，缺省回退到 time_window_hours
+    max_age = filtering.get("max_age_hours", time_window)
 
     if test_mode:
         # --queries-per-batch 未指定时默认每批 2 条（与 main.py collect --test 对齐），避免静默全量
@@ -63,7 +69,14 @@ async def collect_articles(test_mode: bool, max_per_batch: int = 0, tavily_n: in
 
     collector = NewsCollector(api_key=api_key)
     try:
-        articles = await collector.collect(queries, batch_id="daily_run", tavily_top_n=tavily_n)
+        articles = await collector.collect(
+            queries, batch_id="daily_run", tavily_top_n=tavily_n,
+            max_age_hours=max_age,
+            url_dedup=filtering.get("url_dedup", True),
+            title_dedup=filtering.get("title_dedup", True),
+            title_similarity_threshold=filtering.get("title_similarity_threshold", 0.85),
+            min_content_length=filtering.get("min_content_length", 0),
+        )
         path = collector.save_to_file(articles, f"raw_{'test' if test_mode else 'full'}_{int(time.time())}.json", date_str=today)
         print(f"\n  ✅ 采集完成: {len(articles)} 篇", flush=True)
         print(f"  💾 保存到: {path}", flush=True)
