@@ -52,11 +52,15 @@ class LLMClient:
         response_model: type[T],
         temperature: float = 0.3,
         max_retries: int = 2,
+        base_delay: float = 1.0,
     ) -> T:
         """
         调用 LLM 并解析返回的 JSON 为 Pydantic 模型。
-        支持最多 max_retries 次重试（解析失败时）。
+        第二轮 R15: 指数退避重试（1s/2s/4s...），避免瞬时故障直接失败。
         """
+        import time
+
+        last_exc: Exception | None = None
         for attempt in range(max_retries + 1):
             try:
                 resp = self._client.chat.completions.create(
@@ -75,7 +79,10 @@ class LLMClient:
                 return response_model.model_validate(data)
 
             except Exception as e:
+                last_exc = e
                 if attempt < max_retries:
+                    delay = base_delay * (2 ** attempt)
+                    time.sleep(delay)
                     continue
                 raise RuntimeError(f"LLM 调用失败（{max_retries+1}次重试后）: {e}") from e
 

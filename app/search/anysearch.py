@@ -90,7 +90,7 @@ def _parse_search_results(md_text: str, query_origin: str | None = None) -> tupl
     results: list[SearchResultItem] = []
 
     # 提取总结果数
-    total_match = re.search(r'\((\d+)\s+results', md_text)
+    total_match = re.search(r'\((\d+)\s+results?', md_text)
     total_found = int(total_match.group(1)) if total_match else 0
 
     # 提取延迟
@@ -281,37 +281,21 @@ def _parse_batch_results(md_text: str) -> list[tuple[str, int, list[SearchResult
     """
     queries: list[tuple[str, int, list[SearchResultItem]]] = []
 
-    # 分割每个查询的结果块
-    # 匹配: ## Query N: query_text
-    blocks = re.split(r'\n## Query \d+:\s+', md_text)
-    # 第一个块是前缀（可能为空），跳过
-    if not md_text.startswith("## Query 1:") and len(blocks) > 1:
-        blocks = blocks[1:]
-    elif md_text.startswith("## Query 1:"):
-        # split 后第一个元素是空的
-        blocks = blocks[1:] if blocks[0] == "" else blocks
+    # 用 findall 直接提取所有 "## Query N: query_text" 块，避免 split 边界问题
+    pattern = re.compile(
+        r'^## Query \d+:\s*(.+?)\n(.*?)(?=\n## Query \d+:|\Z)',
+        re.DOTALL | re.MULTILINE,
+    )
+    matches = pattern.findall(md_text)
 
-    now = datetime.now(timezone.utc)
-
-    for i, block in enumerate(blocks):
-        if not block.strip():
+    for query_text, rest in matches:
+        query_text = query_text.strip()
+        if not query_text:
             continue
-
-        # 第一行是查询文本（到换行符为止）
-        first_newline = block.find('\n')
-        if first_newline == -1:
-            query_text = block.strip()
-            rest = ""
-        else:
-            query_text = block[:first_newline].strip()
-            rest = block[first_newline:]
-
-        # 解析这个查询的搜索结果
         total_found, results = _parse_search_results(rest, query_origin=query_text)
         queries.append((query_text, total_found, results))
 
     return queries
-
 
 # ═══════════════════════════════════════════════════════
 # 客户端

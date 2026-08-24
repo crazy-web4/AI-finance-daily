@@ -54,10 +54,10 @@ async def collect_articles(test_mode: bool, max_per_batch: int = 0, tavily_n: in
     strategy = load_strategy()
     # 架构评审 #13: 时效窗口与过滤阈值改由 yaml 配置驱动
     ss = strategy["search_strategy"]
+    # 第二轮 R11: 时效配置单源 — 统一走 defaults.time_window_hours，
+    # 移除 filtering.max_age_hours 死配置（与 time_window 重复定义）
     time_window = ss["defaults"].get("time_window_hours", 24)
     filtering = ss.get("filtering", {})
-    # max_age_hours 优先用 filtering 配置，缺省回退到 time_window_hours
-    max_age = filtering.get("max_age_hours", time_window)
 
     if test_mode:
         # --queries-per-batch 未指定时默认每批 2 条（与 main.py collect --test 对齐），避免静默全量
@@ -72,7 +72,7 @@ async def collect_articles(test_mode: bool, max_per_batch: int = 0, tavily_n: in
     try:
         articles = await collector.collect(
             queries, batch_id="daily_run", tavily_top_n=tavily_n,
-            max_age_hours=max_age,
+            max_age_hours=time_window,
             url_dedup=filtering.get("url_dedup", True),
             title_dedup=filtering.get("title_dedup", True),
             title_similarity_threshold=filtering.get("title_similarity_threshold", 0.85),
@@ -378,7 +378,10 @@ async def main():
 
         # Step 1.5: 空栏目补全（可选）
         if args.backfill:
+            pre_count = len(articles)
             articles = await backfill_empty_categories(articles, load_api_key())
+            rr.set("backfill_added", len(articles) - pre_count)
+            rr.stage("backfill")
         rr.stage("collect")
         rr.set("articles", len(articles))
 
