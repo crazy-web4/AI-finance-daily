@@ -31,6 +31,7 @@ from app.agents.pipeline import AnalystAgent, ChiefEditorAgent
 from app.agents.factcheck import FactCheckerAgent, ground_key_data
 from app.report.renderer import PDFRenderer
 from app.utils.runlog import RunReport
+from app.utils.text_cleaner import clean_full
 from app.search.anysearch import AnySearchClient
 
 
@@ -109,7 +110,8 @@ async def do_extract_fulltexts(
         async with sem:
             try:
                 md = await client.extract(url)
-                return (md or "").strip()[:max_chars]
+                # 架构评审第二轮 P0-4: 原文入库前清洗水印/断词，LLM 吃干净文本
+                return clean_full((md or "").strip())[:max_chars]
             except Exception as e:
                 print(f"  ⚠️ 全文提取失败 {url}: {e}", flush=True)
                 return ""

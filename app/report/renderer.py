@@ -13,6 +13,7 @@ from pathlib import Path
 
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 from pydantic import BaseModel, Field
+from app.utils.text_cleaner import complete_title, safe_render_clean
 
 from app.schemas.models import DailyReport
 
@@ -87,10 +88,10 @@ class PDFRenderer:
                 items.append({
                     "item_id": item.item_id,
                     "rank": item.rank,
-                    "title": item.title,
+                    "title": complete_title(item.title),
                     "lead": item.lead,
                     "key_data": [{"label": kd.label, "value": kd.value} for kd in item.key_data],
-                    "details": item.details,
+                    "details": safe_render_clean(item.details),
                     "analysis": item.analysis,
                     "sources": [
                         {"name": src.name, "url": str(src.url), "is_official": src.is_official}
@@ -114,7 +115,7 @@ class PDFRenderer:
             "report_date_cn": self._format_date_cn(report.report_date),
             "watermark_text": f"广明 {report.report_date.replace('-', '.')}",
             "sections": sections,
-            "editor_summary": report.editor_summary,
+            "editor_summary": safe_render_clean(report.editor_summary),
             "show_toc": self.config.show_toc,
             "show_cover": self.config.show_cover,
         }
