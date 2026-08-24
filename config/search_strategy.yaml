@@ -480,4 +480,3 @@ search_strategy:
     title_dedup: true
     title_similarity_threshold: 0.85
     min_content_length: 0
-    max_age_hours: 48

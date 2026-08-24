@@ -13,6 +13,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 from app.pipeline.cluster import _jaccard, _title_bigrams
+from app.utils.timeutil import report_now, report_today
 
 EVENTS_DIR = Path("data/events")
 
@@ -32,18 +33,21 @@ def load_recent_event_titles(
     if not base.exists():
         return []
 
-    exclude_date = exclude_date or datetime.now().strftime("%Y-%m-%d")
-    window_start = datetime.now() - timedelta(days=days)
+    # 第二轮 R16: 用报告时区的"今天"和窗口起点，保证凌晨运行时日期一致
+    now = report_now()
+    exclude_date = exclude_date or report_today()
+    window_start = now - timedelta(days=days)
 
     titles: list[tuple[str, str]] = []
     for d in sorted(base.iterdir()):
         if not d.is_dir():
             continue  # 跳过旧版平铺文件，只认 {date}/ 目录
         try:
+            # 目录日期是"当天"的概念，比较时用目录日期的 23:59 与窗口起点比较
             dt = datetime.strptime(d.name, "%Y-%m-%d")
         except ValueError:
             continue
-        if d.name == exclude_date or dt < window_start:
+        if d.name == exclude_date or dt < window_start.replace(tzinfo=None):
             continue
         for f in sorted(d.glob("events_*.json")):
             try:

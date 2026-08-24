@@ -15,6 +15,7 @@ import hashlib
 import json
 import re
 from datetime import datetime, timezone
+from app.utils.timeutil import report_now, report_today
 from pathlib import Path
 from urllib.parse import urlparse, urlunparse
 
@@ -273,6 +274,19 @@ class NewsCollector:
         执行一次完整采集：搜索 → 归一化 → 去重。
         双引擎：AnySearch + Tavily（可选）
         """
+        # 第二轮 R14: Tavily time_range 随时效窗口联动
+        def _tavily_time_range(hours: int) -> str:
+            if hours <= 24:
+                return "day"
+            elif hours <= 24 * 7:
+                return "week"
+            elif hours <= 24 * 30:
+                return "month"
+            else:
+                return "year"
+
+        tavily_time_range = _tavily_time_range(max_age_hours)
+
         import asyncio
 
         # 1. AnySearch 批量搜索
@@ -310,13 +324,13 @@ class NewsCollector:
         if self.tavily:
             sem = asyncio.Semaphore(5)
 
-            async def tavily_search(q, time_range="day"):
+            async def tavily_search(q):
                 async with sem:
                     items = await self.tavily.search(
                         q.query,
                         max_results=min(q.max_results, 7),
                         search_depth="advanced",
-                        time_range=time_range,
+                        time_range=tavily_time_range,
                     )
                     return (q, items)
 
@@ -340,7 +354,7 @@ class NewsCollector:
             # 取前 tavily_top_n 条
             supplement_queries = supplement_queries[:tavily_top_n]
 
-            print(f"  🔍 Tavily 补充搜索（{len(supplement_queries)} 条，覆盖 {len(cats)} 个分类）", flush=True)
+            print(f"  🔍 Tavily 补充搜索（{len(supplement_queries)} 条，覆盖 {len(cats)} 个分类，time_range={tavily_time_range}）", flush=True)
             tasks = [tavily_search(q) for q in supplement_queries]
             results = await asyncio.gather(*tasks, return_exceptions=True)
 
@@ -405,13 +419,14 @@ class NewsCollector:
         date_str: str | None = None,
     ) -> Path:
         """保存为 JSON 文件（按日期归档）。"""
+        # 第二轮 R13: 日期目录统一用报告时区（北京时间），与 run_daily 一致
         if not filename:
-            ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+            ts = report_now().strftime("%Y%m%d_%H%M%S")
             filename = f"raw_articles_{ts}.json"
 
         # 按日期建子目录
         if date_str is None:
-            date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+            date_str = report_today()
         out_dir = self.output_dir / date_str
         out_dir.mkdir(parents=True, exist_ok=True)
 

@@ -71,3 +71,72 @@ class TestMarkdownParser(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+# 第二轮 R18: _parse_batch_results 测试
+from app.search.anysearch import _parse_batch_results
+
+BATCH_GOLDEN_MD = """## Query 1: OpenAI new model
+
+## Search Results (2 results, 150ms)
+### 1. OpenAI unveils GPT-6
+- **URL**: https://openai.com/blog/gpt6
+- OpenAI announced GPT-6 today.
+
+### 2. GPT-6 release date confirmed
+- **URL**: https://techcrunch.com/2026/08/20/gpt6
+- TechCrunch reports on the release date.
+
+## Query 2: Anthropic funding
+
+## Search Results (1 result, 200ms)
+### 1. Anthropic raises \$2B
+- **URL**: https://reuters.com/anthropic-funding
+- Reuters reports on Anthropic funding round.
+
+## Query 3: empty result
+
+## Search Results (0 results, 50ms)
+"""
+
+
+class TestBatchParser(unittest.TestCase):
+    def test_parse_batch_counts(self):
+        results = _parse_batch_results(BATCH_GOLDEN_MD)
+        self.assertEqual(len(results), 3)
+        # (query_text, total_found, result_list)
+        self.assertEqual(results[0][0], "OpenAI new model")
+        self.assertEqual(results[0][1], 2)
+        self.assertEqual(len(results[0][2]), 2)
+
+        self.assertEqual(results[1][0], "Anthropic funding")
+        self.assertEqual(results[1][1], 1)
+        self.assertEqual(len(results[1][2]), 1)
+
+        self.assertEqual(results[2][0], "empty result")
+        self.assertEqual(results[2][1], 0)
+        self.assertEqual(len(results[2][2]), 0)
+
+    def test_parse_batch_first_result_fields(self):
+        results = _parse_batch_results(BATCH_GOLDEN_MD)
+        first = results[0][2][0]
+        self.assertEqual(first.title, "OpenAI unveils GPT-6")
+        self.assertEqual(str(first.url), "https://openai.com/blog/gpt6")
+        self.assertEqual(first.source_domain, "openai.com")
+        self.assertEqual(first.query_origin, "OpenAI new model")
+
+    def test_parse_batch_empty(self):
+        results = _parse_batch_results("")
+        self.assertEqual(results, [])
+
+    def test_parse_batch_single_query(self):
+        md = """## Query 1: test query
+
+## Search Results (1 result, 10ms)
+### 1. Test Title
+- **URL**: https://example.com/test
+- Test snippet.
+"""
+        results = _parse_batch_results(md)
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0][0], "test query")
+        self.assertEqual(results[0][1], 1)

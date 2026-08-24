@@ -12,7 +12,9 @@ from datetime import datetime
 from pathlib import Path
 
 from jinja2 import Environment, FileSystemLoader, select_autoescape
+from markupsafe import Markup
 from pydantic import BaseModel, Field
+from app.utils.text_cleaner import complete_title, safe_render_clean
 
 from app.schemas.models import DailyReport
 
@@ -30,9 +32,6 @@ class RenderConfig(BaseModel):
 
     output_dir: str = "data/reports"
     filename_pattern: str = "AI行业全球动态日报_{date}@Cyber_Gm.pdf"
-
-    show_toc: bool = True  # 页数少时不显示目录
-    show_cover: bool = True
 
 
 class PDFRenderer:
@@ -87,11 +86,10 @@ class PDFRenderer:
                 items.append({
                     "item_id": item.item_id,
                     "rank": item.rank,
-                    "title": item.title,
-                    "lead": item.lead,
+                    "title": complete_title(item.title),
                     "key_data": [{"label": kd.label, "value": kd.value} for kd in item.key_data],
-                    "details": item.details,
-                    "analysis": item.analysis,
+                    "details": self._render_paragraphs(safe_render_clean(item.details)),
+                    "analysis": self._render_paragraphs(safe_render_clean(item.analysis)) if item.analysis else None,
                     "sources": [
                         {"name": src.name, "url": str(src.url), "is_official": src.is_official}
                         for src in item.sources
@@ -114,15 +112,34 @@ class PDFRenderer:
             "report_date_cn": self._format_date_cn(report.report_date),
             "watermark_text": f"广明 {report.report_date.replace('-', '.')}",
             "sections": sections,
-            "editor_summary": report.editor_summary,
-            "show_toc": self.config.show_toc,
-            "show_cover": self.config.show_cover,
+            "editor_summary": self._render_paragraphs(safe_render_clean(report.editor_summary)) if report.editor_summary else None,
         }
 
     @staticmethod
     def _format_date_cn(date_str: str) -> str:
         dt = datetime.strptime(date_str, "%Y-%m-%d")
         return f"{dt.year}年{dt.month}月{dt.day}日"
+
+    @staticmethod
+    @staticmethod
+    def _render_paragraphs(text):
+        """
+        第二轮 R6: 把多段正文转成 HTML <p> 段落。
+        LLM 输出的 details/analysis 用空行分段，直接塞进 HTML 会塌成一段。
+        返回 Markup 对象（autoescape 下不转义）。
+        """
+        if not text:
+            return ""
+        text = text.strip()
+        if not text:
+            return ""
+        # 按空行分段（兼容 CRLF 和 LF）
+        normalized = text.replace(chr(13) + chr(10), chr(10))
+        raw_paras = [p.strip() for p in normalized.split(chr(10) + chr(10)) if p.strip()]
+        if not raw_paras:
+            return Markup(text)
+        paras_html = "".join("<p>" + p + "</p>" for p in raw_paras)
+        return Markup(paras_html)
 
     # ── PDF 渲染 ───────────────────────────────────
 
