@@ -14,7 +14,7 @@ def mk_report(editor_summary=None, with_item=False):
     if with_item:
         items.append(ReportItem(
             item_id="item_001", event_id="evt_1", rank=1, category=Category.TOP_NEWS,
-            title="Clau de 发布新模型", lead="", details="第一段内容。\n\n第二段内容。",
+            title="Clau de 发布新模型", details="第一段内容。\n\n第二段内容。",
             word_count=20))
     return DailyReport(
         report_id="daily_t", report_date="2026-08-24",
@@ -40,6 +40,34 @@ class TestRenderer(unittest.TestCase):
         html = PDFRenderer().render_html(mk_report(editor_summary="x", with_item=True))
         self.assertIn("Claude 发布新模型", html)
         self.assertNotIn("Clau de", html)
+
+    def test_details_paragraphs_rendered(self):
+        """第二轮 R6: 多段 details 应渲染为 <p> 段落，而非塌成一段"""
+        html = PDFRenderer().render_html(mk_report(editor_summary="x", with_item=True))
+        self.assertIn("<p>第一段内容。</p>", html)
+        self.assertIn("<p>第二段内容。</p>", html)
+
+    def test_editor_summary_paragraphs_rendered(self):
+        """第二轮 R6: 多段导读也应渲染为 <p> 段落"""
+        report = mk_report(editor_summary="导读第一段。\n\n导读第二段。")
+        html = PDFRenderer().render_html(report)
+        self.assertIn("<p>导读第一段。</p>", html)
+        self.assertIn("<p>导读第二段。</p>", html)
+
+    def test_none_details_safe(self):
+        """R6: details 为 None/空字符串时不应崩溃"""
+        items = [ReportItem(
+            item_id="item_001", event_id="evt_1", rank=1, category=Category.TOP_NEWS,
+            title="test", details="", word_count=0)]
+        report = DailyReport(
+            report_id="daily_t", report_date="2026-08-24",
+            time_window_start=NOW, time_window_end=NOW,
+            total_items=1, total_word_count=0,
+            sections=[ReportSection(section_id=Category.TOP_NEWS, section_name="今日头条",
+                                    item_count=1, items=items)],
+        )
+        html = PDFRenderer().render_html(report)
+        self.assertIn("<html", html)
 
 
 if __name__ == "__main__":

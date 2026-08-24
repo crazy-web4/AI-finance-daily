@@ -238,7 +238,6 @@ class ReportKeyData(BaseModel):
     """日报条目中的关键数据。"""
     label: str = Field(..., description="数据项标签，如 '发布时间'、'融资额'")
     value: str = Field(..., description="数值/内容")
-    source_indexes: list[int] = Field(default_factory=list)
 
 
 class ReportSource(BaseModel):
@@ -255,7 +254,6 @@ class ReportItem(BaseModel):
     rank: int = Field(ge=1, description="在所属栏目内的排名")
     category: Category
     title: str = Field(..., description="条目标题")
-    lead: str = Field(..., description="导语，2-3句话")
     key_data: list[ReportKeyData] = Field(default_factory=list)
     details: str = Field(..., description="事件详情，1-2段")
     analysis: str | None = Field(default=None, description="行业影响/编辑判断")

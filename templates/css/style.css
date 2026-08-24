@@ -279,6 +279,23 @@ body::before {
   text-indent: 0;
 }
 
+/* 第二轮 R6: 正文分段渲染，段落间距 */
+.article-body p {
+  margin: 0 0 2mm 0;
+  text-indent: 2em;
+}
+.article-body p:last-child {
+  margin-bottom: 0;
+}
+
+/* 分析段落样式 */
+.article-analysis p {
+  margin: 0 0 1.5mm 0;
+}
+.article-analysis p:last-child {
+  margin-bottom: 0;
+}
+
 .article-analysis {
   font-size: 9pt;
   color: #555;

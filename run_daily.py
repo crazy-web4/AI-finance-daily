@@ -100,19 +100,74 @@ def load_from_file(path: str) -> list[RawNewsArticle]:
 async def do_extract_fulltexts(
     selected_events, article_map, api_key,
     max_articles: int = 2, max_chars: int = 3000, concurrency: int = 4,
-) -> dict:
-    """架构评审 #7: 为入选事件提取 Top 文章原文（best-effort）。"""
+    cache_dir: str = "data/cache/extract",
+    cache_ttl_days: int = 7,
+) -> tuple[dict, dict]:
+    """
+    架构评审 #7: 为入选事件提取 Top 文章原文（best-effort）。
+    第二轮 R8: 增加 URL 级磁盘缓存，避免重复提取浪费额度；返回统计信息。
+
+    返回: (fulltexts_map, stats_dict)
+      stats: {"total_urls", "cache_hit", "api_success", "api_failed", "events_with_text"}
+    """
+    import hashlib
+    import os
+    import time
+
     client = AnySearchClient(api_key=api_key)
     sem = asyncio.Semaphore(concurrency)
     out: dict[str, list] = {}
 
+    # 缓存目录
+    os.makedirs(cache_dir, exist_ok=True)
+    cache_ttl_sec = cache_ttl_days * 86400
+
+    def _cache_path(url: str) -> str:
+        key = hashlib.sha256(url.encode("utf-8")).hexdigest()[:16]
+        return os.path.join(cache_dir, key + ".txt")
+
+    def _cache_get(url: str) -> str | None:
+        p = _cache_path(url)
+        try:
+            if os.path.exists(p):
+                age = time.time() - os.path.getmtime(p)
+                if age < cache_ttl_sec:
+                    with open(p, "r", encoding="utf-8") as f:
+                        return f.read() or None
+        except Exception:
+            pass
+        return None
+
+    def _cache_set(url: str, text: str) -> None:
+        try:
+            p = _cache_path(url)
+            with open(p, "w", encoding="utf-8") as f:
+                f.write(text)
+        except Exception:
+            pass
+
+    stats = {"total_urls": 0, "cache_hit": 0, "api_success": 0, "api_failed": 0}
+
     async def fetch(url: str) -> str:
+        stats["total_urls"] += 1
+        # 先查缓存
+        cached = _cache_get(url)
+        if cached is not None:
+            stats["cache_hit"] += 1
+            return cached
+        # 调用 API
         async with sem:
             try:
                 md = await client.extract(url)
-                # 架构评审第二轮 P0-4: 原文入库前清洗水印/断词，LLM 吃干净文本
-                return clean_full((md or "").strip())[:max_chars]
+                text = clean_full((md or "").strip())[:max_chars]
+                if text:
+                    stats["api_success"] += 1
+                    _cache_set(url, text)
+                else:
+                    stats["api_failed"] += 1
+                return text
             except Exception as e:
+                stats["api_failed"] += 1
                 print(f"  ⚠️ 全文提取失败 {url}: {e}", flush=True)
                 return ""
 
@@ -130,7 +185,9 @@ async def do_extract_fulltexts(
                 out[e.event_id] = texts
     finally:
         await client.close()
-    return out
+
+    stats["events_with_text"] = len(out)
+    return out, stats
 
 
 def _balanced_select_events(events, article_map, max_total=18):
@@ -368,12 +425,18 @@ async def main():
         print(f"  🎯 均衡选择 {len(selected_events)} 个事件用于分析", flush=True)
         if not args.no_extract:
             print("  📖 全文提取: 入选事件 Top 文章原文...", flush=True)
-            fulltexts_map = await do_extract_fulltexts(
+            fulltexts_map, extract_stats = await do_extract_fulltexts(
                 selected_events, article_map, load_api_key()
             )
-            print(f"     成功提取 {len(fulltexts_map)}/{len(selected_events)} 个事件的原文", flush=True)
+            print(
+                f"     成功提取 {len(fulltexts_map)}/{len(selected_events)} 个事件的原文"
+                f" (缓存命中 {extract_stats['cache_hit']}/{extract_stats['total_urls']})",
+                flush=True,
+            )
         rr.stage("extract")
+        extract_stats_final = extract_stats if not args.no_extract else {"skipped": True}
         rr.set("fulltext_events", len(fulltexts_map))
+        rr.set("extract_stats", extract_stats_final)
 
         # Step 3: Agent 分析 + 事实核查 + 总编
         report, llm_stats = await do_agent_analysis(

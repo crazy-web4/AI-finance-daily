@@ -230,9 +230,10 @@ OFFICIAL_SOURCE_KEYWORDS = [
 
 
 def _analysis_to_item(event, analysis, rank, category_id, article_map=None) -> ReportItem:
+    # 第二轮 R7: 来源名-URL 对齐修复。
+    # 来源名直接取自文章的 source_name 字段（与 URL 同篇文章，天然对齐），
+    # 不再用 LLM 的 source_names 按下标配对——LLM 列表顺序与文章顺序不保证一致。
     sources = []
-    # 优先用分析出的来源名称，其次用域名/来源名
-    src_names = analysis.get("source_names", []) or []
     seen_domains: set[str] = set()
 
     # 优先从 article_map 取真实文章 URL（按域名去重，保持文章的可靠性排序）
@@ -245,10 +246,8 @@ def _analysis_to_item(event, analysis, rank, category_id, article_map=None) -> R
             if d in seen_domains:
                 continue
             seen_domains.add(d)
-            idx = len(sources)
-            name = src_names[idx] if idx < len(src_names) else (art.source_name or d)
             sources.append(ReportSource(
-                name=name,
+                name=art.source_name or d,
                 url=str(art.url),
                 is_official=any(kw in d for kw in OFFICIAL_SOURCE_KEYWORDS),
             ))
@@ -256,14 +255,13 @@ def _analysis_to_item(event, analysis, rank, category_id, article_map=None) -> R
                 break
 
     # 回退：无 article_map 时才用域名级 URL
-    for i, d in enumerate(event.source_domains[:5]):
+    for d in event.source_domains[:5]:
         if len(sources) >= 5 or d in seen_domains:
             continue
         seen_domains.add(d)
         try:
-            name = src_names[i] if i < len(src_names) else d
             sources.append(ReportSource(
-                name=name,
+                name=d,
                 url=f"https://{d}",
                 is_official=any(kw in d for kw in OFFICIAL_SOURCE_KEYWORDS),
             ))
@@ -279,10 +277,9 @@ def _analysis_to_item(event, analysis, rank, category_id, article_map=None) -> R
             ))
 
     title = analysis.get("title", event.canonical_title)
-    lead = analysis.get("lead", "")
     details = analysis.get("details", "") or analysis.get("summary", "")
     an = analysis.get("analysis")
-    text_len = len(title) + len(lead) + len(details) + len(an or "")
+    text_len = len(title) + len(details) + len(an or "")
 
     cat = category_id if category_id in [c.value for c in Category] else "industry"
     return ReportItem(
@@ -291,7 +288,6 @@ def _analysis_to_item(event, analysis, rank, category_id, article_map=None) -> R
         rank=rank,
         category=Category(cat),
         title=title,
-        lead=lead,
         key_data=key_data,
         details=details,
         analysis=an,
