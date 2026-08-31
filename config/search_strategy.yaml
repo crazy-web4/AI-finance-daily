@@ -5,6 +5,8 @@ search_strategy:
     time_window_hours: 24
     max_results_per_query: 10
     dedup_by_url: true
+    # 第三轮 T22: 聚类标题相似度阈值（原硬编码 0.6）
+    cluster_title_threshold: 0.6
   batches:
   - batch_id: company_events
     name: 核心公司事件搜索

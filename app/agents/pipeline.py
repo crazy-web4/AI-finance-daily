@@ -37,7 +37,8 @@ from app.agents.base import extract_json as _extract_json  # noqa: E402
 
 
 # 分析结果缓存版本：prompt/输出结构变化时 +1，使旧缓存自动失效。
-ANALYST_CACHE_VERSION = "v3"
+# 第三轮 T3: v4 使含内联水印噪声的旧分析缓存自动失效
+ANALYST_CACHE_VERSION = "v4"
 
 
 def _event_fingerprint(event: NewsEvent, fulltexts: list[dict] | None = None) -> str:
@@ -211,7 +212,7 @@ class AnalystAgent:
         fulltexts_map: dict | None = None,
     ) -> tuple | None:
         async with semaphore:
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()  # 第三轮 T20: 弃用 API 替换
             fts = (fulltexts_map or {}).get(event.event_id)
             result = await loop.run_in_executor(
                 None, self.analyze_event, event, article_map, fts
@@ -367,7 +368,7 @@ class ChiefEditorAgent:
                 reverse=True,
             )
 
-        # 选今日头条（>=80分，取前7，最少3条才放宽到75分）
+        # 选今日头条（>=80分，取前7，不足3条时放宽到70分）
         all_sorted = []
         for cat, items in by_category.items():
             for event, analysis in items:

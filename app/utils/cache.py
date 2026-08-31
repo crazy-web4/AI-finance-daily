@@ -38,6 +38,12 @@ class SmartCache:
         self._file_cache_dir = self.cache_dir / "file_cache"
         self._file_cache_dir.mkdir(exist_ok=True)
 
+        # 第三轮 T25: 启动时主动清理过期磁盘缓存（原仅靠读取时判过期）
+        try:
+            self._cleanup_file_cache()
+        except Exception:
+            pass
+
         # 统计
         self.hits = 0
         self.misses = 0
@@ -327,12 +333,12 @@ def smart_lru_cache(maxsize: int = 128) -> Callable[..., Any]:
     return decorator
 
 
-# 文本内容缓存
-def cache_extract_text(url: str, text: str) -> None:
+# 文本内容缓存（第三轮 T12: ttl 可配，供 run_daily extract 收敛使用）
+def cache_extract_text(url: str, text: str, ttl_hours: float = 24) -> None:
     """缓存提取的文本"""
     cache_key = f"extract:{url}"
     cache = get_cache()
-    cache.set(cache_key, text, ttl_hours=24)  # 缓存24小时
+    cache.set(cache_key, text, ttl_hours=ttl_hours)
 
 
 def get_cached_extract_text(url: str) -> Optional[str]:

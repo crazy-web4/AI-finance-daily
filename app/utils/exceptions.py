@@ -126,16 +126,17 @@ def handle_api_error(response):
             status_code=response.status_code
         )
     elif response.status_code == 401:
+        # 第三轮 T11: details 须以字典传入（原实现传 status_code= 关键字直接 TypeError）
         raise AppError(
             ErrorType.API_AUTH_ERROR,
             "Authentication failed",
-            status_code=response.status_code
+            details={"status_code": response.status_code}
         )
     elif response.status_code == 400:
         raise AppError(
             ErrorType.API_BAD_REQUEST,
             "Bad request",
-            status_code=response.status_code
+            details={"status_code": response.status_code}
         )
 
 
@@ -150,7 +151,7 @@ class ErrorHandler:
 
             if logger:
                 logger.error(
-                    f"AppError: {error.message}",
+                    f"AppError: {str(error)}",
                     error_type=error.error_type.value,
                     error_id=error.error_id,
                     details=error.details

@@ -31,7 +31,11 @@ class LLMClient:
     ) -> None:
         self.api_key = api_key or os.environ.get("ARK_API_KEY", "") or os.environ.get("OPENAI_API_KEY", "")
         self.base_url = base_url or os.environ.get("ARK_BASE_URL", "") or os.environ.get("OPENAI_BASE_URL", "")
-        self.model = model or os.environ.get("LLM_MODEL", "doubao-pro-128k-240515")
+        # 第三轮 T13: 模型名优先级 显式参数 > 环境变量 > yaml llm.model（原 yaml llm 段为死配置）
+        if not model:
+            from app.config import get_llm_config
+            model = os.environ.get("LLM_MODEL", "") or get_llm_config().model
+        self.model = model
 
         if not self.api_key:
             raise ValueError("未配置 API key，请设置 ARK_API_KEY 或 OPENAI_API_KEY")

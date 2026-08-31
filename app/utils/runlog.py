@@ -24,10 +24,12 @@ class RunReport:
         self._t0 = time.time()
         self._stage_t = time.time()
 
-    def stage(self, name: str) -> None:
+    def stage(self, name: str) -> float:
         now = time.time()
-        self.data["stages"][name] = round(now - self._stage_t, 1)
+        elapsed = round(now - self._stage_t, 1)
+        self.data["stages"][name] = elapsed
         self._stage_t = now
+        return elapsed
 
     def set(self, key: str, value) -> None:
         self.data[key] = value

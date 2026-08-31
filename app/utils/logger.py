@@ -155,9 +155,25 @@ class StructuredLogger:
                   cost=cost)
 
 
-def get_logger(name: str, log_dir: str = "logs") -> StructuredLogger:
-    """获取或创建日志记录器"""
-    return StructuredLogger(name, log_dir)
+_LOGGER_CACHE: Dict[str, StructuredLogger] = {}
+
+
+def get_logger(name: str, log_dir: Optional[str] = None) -> StructuredLogger:
+    """获取或创建日志记录器。
+
+    第三轮 T15: 单例缓存——原实现每次调用都 handlers.clear() 后新建
+    FileHandler，旧句柄不 close（fd 泄漏隐患）；log_dir 默认接配置。
+    """
+    if log_dir is None:
+        try:
+            from app.config import get_config
+            log_dir = get_config().log_dir
+        except Exception:
+            log_dir = "logs"
+    key = f"{name}@{log_dir}"
+    if key not in _LOGGER_CACHE:
+        _LOGGER_CACHE[key] = StructuredLogger(name, log_dir)
+    return _LOGGER_CACHE[key]
 
 
 # 便捷的日志函数

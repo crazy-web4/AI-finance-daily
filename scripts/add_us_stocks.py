@@ -110,9 +110,14 @@ async def search_us_stocks(api_key: str, tavily_key: str = "") -> list:
 
 
 def articles_to_items(articles: list, max_items: int = 6) -> list:
-    """把 RawNewsArticle 列表转成 ReportItem 列表（简易版）。"""
+    """把 RawNewsArticle 列表转成 ReportItem 列表（简易版）。
+
+    第三轮 T9: 先过滤短摘要、再取前 max_items（原实现先切片后过滤，
+    存在短摘要时最终条数会少于 max_items）。
+    """
     items = []
-    for i, art in enumerate(articles[:max_items], 1):
+    rank = 0
+    for art in articles:
         # 构造简易标题 + 摘要作为正文
         title = art.title
         details = art.snippet.strip()
@@ -122,14 +127,15 @@ def articles_to_items(articles: list, max_items: int = 6) -> list:
         # 去掉过短的
         if len(details) < 50:
             continue
+        rank += 1
 
         source_name = art.source_name or art.source_domain
         source_url = str(art.url)
 
         item = ReportItem(
-            item_id=f"us_{i:03d}",
-            event_id=f"evt_us_{i}",
-            rank=i,
+            item_id=f"us_{rank:03d}",
+            event_id=f"evt_us_{rank}",
+            rank=rank,
             category=Category.US_STOCKS,
             title=title,
             details=details,

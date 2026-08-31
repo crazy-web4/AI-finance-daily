@@ -88,9 +88,20 @@ async def cmd_collect_async(args: argparse.Namespace) -> None:
         print(f"    {bid}: {cnt} 条")
 
     print("\n🚀 开始采集...")
+    # 第三轮 T7: 与 run_daily 过滤口径一致（时效/去重/长度阈值接 yaml）
+    ss = strategy["search_strategy"]
+    time_window = ss["defaults"].get("time_window_hours", 24)
+    filtering = ss.get("filtering", {})
     collector = NewsCollector(api_key=api_key)
     try:
-        articles = await collector.collect(queries, batch_id="cli_run")
+        articles = await collector.collect(
+            queries, batch_id="cli_run",
+            max_age_hours=time_window,
+            url_dedup=filtering.get("url_dedup", True),
+            title_dedup=filtering.get("title_dedup", True),
+            title_similarity_threshold=filtering.get("title_similarity_threshold", 0.85),
+            min_content_length=filtering.get("min_content_length", 0),
+        )
         print(f"\n✅ 采集完成: {len(articles)} 篇（去重后）")
 
         # 统计
@@ -108,9 +119,9 @@ async def cmd_collect_async(args: argparse.Namespace) -> None:
         print(f"    来源等级: {rels}")
         print(f"    分类: {cats}")
 
-        # 保存
-        from datetime import datetime, timezone
-        ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+        # 保存（第三轮 T7: 文件名时间戳用报告时区，与 run_daily 一致）
+        from app.utils.timeutil import report_now
+        ts = report_now().strftime("%Y%m%d_%H%M%S")
         mode = "test" if args.test else (args.batch or "full")
         fname = f"raw_{mode}_{ts}.json"
         path = collector.save_to_file(articles, fname)

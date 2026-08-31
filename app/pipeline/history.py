@@ -43,11 +43,13 @@ def load_recent_event_titles(
         if not d.is_dir():
             continue  # 跳过旧版平铺文件，只认 {date}/ 目录
         try:
-            # 目录日期是"当天"的概念，比较时用目录日期的 23:59 与窗口起点比较
+            # 目录日期是"当天"的概念，比较时用目录日期的 23:59:59 与窗口起点比较
+            # （第三轮 T4: 原代码用 00:00 比较，days=3 实际只覆盖约 2 天）
             dt = datetime.strptime(d.name, "%Y-%m-%d")
         except ValueError:
             continue
-        if d.name == exclude_date or dt < window_start.replace(tzinfo=None):
+        dt_end = dt.replace(hour=23, minute=59, second=59)
+        if d.name == exclude_date or dt_end < window_start.replace(tzinfo=None):
             continue
         for f in sorted(d.glob("events_*.json")):
             try:
