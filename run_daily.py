@@ -20,7 +20,10 @@ from pathlib import Path
 from dotenv import load_dotenv
 load_dotenv()
 
-from app.search.queries import load_strategy, generate_queries
+from app.config import init_config, get_config
+from app.utils.logger import get_logger
+from app.utils.performance import get_performance_monitor
+from app.utils.resource import ResourceOptimizer
 from app.pipeline.collector import NewsCollector, RawNewsArticle
 from app.pipeline.cluster import cluster_articles, build_article_map
 from app.pipeline.backfill import backfill_empty_categories
@@ -31,6 +34,7 @@ from app.agents.pipeline import AnalystAgent, ChiefEditorAgent
 from app.agents.factcheck import FactCheckerAgent, ground_key_data
 from app.report.renderer import PDFRenderer
 from app.utils.runlog import RunReport
+from app.utils.alert import send_alert
 from app.utils.text_cleaner import clean_full
 from app.search.anysearch import AnySearchClient
 
@@ -249,11 +253,18 @@ def do_cluster(articles):
     return events
 
 
-async def do_agent_analysis(events, article_map, max_events=6, concurrency=3, fulltexts_map=None):
+async def do_agent_analysis(events, article_map, max_events=6, concurrency=None, fulltexts_map=None):
     """步骤3：Agent 分析 + 总编。"""
     print("\n" + "=" * 60)
     print("  STEP 3 / 4  Agent 分析与编辑")
     print("=" * 60, flush=True)
+
+    # 并发数未显式指定时，按当前系统负载动态调整（低负载提速、高负载减压）
+    if concurrency is None:
+        optimizer = ResourceOptimizer.from_config()
+        load = optimizer.system_load()
+        concurrency = optimizer.recommend(load).analyzer
+        print(f"  ⚙️ 动态并发：系统负载 {load:.2f} → 分析并发 {concurrency}", flush=True)
 
     llm = LLMClient()
     analyst = AnalystAgent(llm=llm)
@@ -338,25 +349,51 @@ async def do_pdf(report):
     return pdf_path
 
 
+def init_system():
+    """初始化系统"""
+    # 初始化配置
+    config_path = "config/app_config.yaml"
+    config = init_config(config_path, watch=True)
+
+    # 设置日志
+    logger = get_logger("run_daily")
+    logger.info("系统初始化", environment=config.environment)
+
+    # 性能监控
+    perf_monitor = get_performance_monitor()
+
+    return config, logger, perf_monitor
+
+
 async def main():
     parser = argparse.ArgumentParser(description="AI 财经日报 · 端到端生成")
+    parser.add_argument("--config", type=str, default="config/app_config.yaml",
+                       help="配置文件路径")
     parser.add_argument("--test", action="store_true", help="测试模式")
     parser.add_argument("--full", action="store_true", help="全量模式")
     parser.add_argument("--from-file", type=str, help="从已采集的JSON文件开始")
     parser.add_argument("--max-events", type=int, default=None, help="分析事件数上限 (默认: --test 6 / 否则 18)")
-    parser.add_argument("--concurrency", type=int, default=3, help="Agent并发数 (默认3)")
+    parser.add_argument("--concurrency", type=int, default=None, help="Agent并发数 (默认按系统负载动态调整)")
     parser.add_argument("--no-agent", action="store_true", help="跳过Agent")
     parser.add_argument("--no-extract", action="store_true", help="跳过原文全文提取(省额度)")
     parser.add_argument("--backfill", action="store_true", help="空栏目自动补全近7天数据")
     parser.add_argument("--no-pdf", action="store_true", help="跳过PDF")
     parser.add_argument("--queries-per-batch", type=int, default=0, help="每批次最多查询数(0=全部)")
     parser.add_argument("--tavily-n", type=int, default=20, help="Tavily补充查询数")
+    parser.add_argument("--no-monitoring", action="store_true", help="禁用性能监控")
     args = parser.parse_args()
+
+    # 初始化系统
+    config, logger, perf_monitor = init_system()
+
+    # 设置环境变量
+    os.environ["LOG_TO_CONSOLE"] = "true" if config.environment == "development" else "false"
 
     start_time = time.time()
     today = report_today()
     rr = RunReport(mode="test" if args.test else ("full" if args.full else "from_file"))
 
+    logger.info("AI 财经日报生成器启动", date=today)
     print("🚀 AI 财经日报生成器", flush=True)
     print(f"📅 日期: {today}", flush=True)
 
@@ -389,6 +426,10 @@ async def main():
         if len(articles) < 5:
             rr.flag(f"文章数过少({len(articles)})，疑似搜索异常")
             print(f"  ❌ 文章数过少（{len(articles)} 篇），疑似搜索异常，终止本次运行", flush=True)
+            send_alert(
+                f"采集异常终止：仅 {len(articles)} 篇文章（阈值5），疑似 key 失效/网络故障",
+                level="error",
+            )
             sys.exit(1)
 
         # Step 2: 聚类
@@ -478,6 +519,11 @@ async def main():
     except Exception as e:
         ok = False
         rr.flag(f"运行异常: {type(e).__name__}: {e}")
+        # 第三轮 P0-4: cron 场景失败主动告警（webhook 未配置时静默跳过）
+        send_alert(
+            f"日报生成失败 [{rr.data['mode']}]: {type(e).__name__}: {str(e)[:200]}",
+            level="error",
+        )
         raise
     finally:
         # 架构评审 #16: 运行报告落盘（成功/失败都写）

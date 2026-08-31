@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import re
 import asyncio
+import hashlib
 from datetime import datetime, timezone
 from typing import Any
 
@@ -20,6 +21,7 @@ from app.pipeline.cluster import build_article_map
 from app.schemas.models import (
     Category,
     DailyReport,
+    NewsEvent,
     ReportItem,
     ReportSection,
     ReportKeyData,
@@ -28,43 +30,40 @@ from app.schemas.models import (
 
 
 # ═══════════════════════════════════════════════════════
-# JSON 解析工具
+# JSON 解析工具（第三轮 P1: 收敛到 app.agents.base 唯一实现）
 # ═══════════════════════════════════════════════════════
 
-def _extract_json(text: str) -> dict[str, Any]:
-    """从LLM输出中提取JSON，支持多种格式和自动修复。"""
-    text = text.strip()
-    m = re.search(r'```json\s*(.*?)\s*```', text, re.DOTALL | re.IGNORECASE)
-    if m:
-        text = m.group(1).strip()
-    start = text.find('{')
-    end = text.rfind('}')
-    if start >= 0 and end > start:
-        text = text[start:end+1]
-    try:
-        return json.loads(text)
-    except (json.JSONDecodeError, ValueError):
-        pass
-    fixed = re.sub(r',(\s*[}\]])', r'\1', text)
-    try:
-        return json.loads(fixed)
-    except (json.JSONDecodeError, ValueError):
-        pass
-    try:
-        decoder = json.JSONDecoder()
-        obj, _ = decoder.raw_decode(text)
-        if isinstance(obj, dict):
-            return obj
-    except Exception:
-        pass
-    raise ValueError(f"无法解析 JSON: {text[:500]}")
+from app.agents.base import extract_json as _extract_json  # noqa: E402
+
+
+# 分析结果缓存版本：prompt/输出结构变化时 +1，使旧缓存自动失效。
+ANALYST_CACHE_VERSION = "v3"
+
+
+def _event_fingerprint(event: NewsEvent, fulltexts: list[dict] | None = None) -> str:
+    """事件内容指纹：规范标题 + 文章ID（内容派生哈希）+ 是否含全文。
+
+    同一事件跨天/重跑时指纹稳定，可直接复用分析结果、省去重复 LLM 调用；
+    文章集合或是否提供原文全文发生变化时指纹随之变化，强制重新分析。
+    """
+    basis = [ANALYST_CACHE_VERSION, event.canonical_title]
+    basis.extend(sorted(event.article_ids))
+    if fulltexts:
+        # 提供全文的分析结论与仅摘要时不同，按全文 URL 区分
+        basis.append("ft:" + ",".join(sorted(ft.get("url", "") for ft in fulltexts)))
+    digest = hashlib.sha1("|".join(basis).encode("utf-8")).hexdigest()[:16]
+    return f"evt_{digest}"
 
 
 # ═══════════════════════════════════════════════════════
 # 上下文构造
 # ═══════════════════════════════════════════════════════
 
-def _build_event_context(event, article_map, fulltexts=None) -> str:
+def _build_event_context(
+    event: NewsEvent,
+    article_map: dict[str, RawNewsArticle],
+    fulltexts: list[dict] | None = None,
+) -> str:
     lines = []
     lines.append(f"## 事件：{event.canonical_title}")
     lines.append(f"涉及公司：{', '.join(event.companies_mentioned) if event.companies_mentioned else '未知'}")
@@ -159,12 +158,31 @@ ANALYST_PROMPT = """你是一名AI行业财经日报的资深分析师兼编辑�
 
 
 class AnalystAgent:
-    def __init__(self, llm=None):
+    def __init__(self, llm=None, use_cache: bool = True) -> None:
         self.llm = llm or LLMClient()
+        self.use_cache = use_cache
 
-    def analyze_event(self, event, article_map, fulltexts=None):
+    def analyze_event(
+        self,
+        event: NewsEvent,
+        article_map: dict[str, RawNewsArticle],
+        fulltexts: list[dict] | None = None,
+    ) -> dict | None:
         context = _build_event_context(event, article_map, fulltexts)
         user_prompt = f"请分析以下AI新闻事件，输出JSON。\n\n{context}"
+
+        # 事件指纹缓存：同一事件重跑/跨天复现时复用结果，省 LLM 调用（#22）
+        fp = _event_fingerprint(event, fulltexts)
+        if self.use_cache:
+            try:
+                from app.utils.cache import get_cached_event_analysis
+                cached = get_cached_event_analysis(fp)
+                if cached and cached.get("is_valid", True):
+                    print(f"    💾 命中分析缓存 [{event.canonical_title[:40]}]", flush=True)
+                    return cached
+            except Exception as e:
+                print(f"    ⚠️  分析缓存读取失败: {e}", flush=True)
+
         try:
             resp = self.llm.chat_text(
                 system_prompt=ANALYST_PROMPT,
@@ -174,12 +192,24 @@ class AnalystAgent:
             data = _extract_json(resp)
             if not data.get("is_valid", True):
                 return None
+            if self.use_cache:
+                try:
+                    from app.utils.cache import cache_event_analysis
+                    cache_event_analysis(fp, data)
+                except Exception:
+                    pass
             return data
         except Exception as e:
             print(f"  ⚠️  分析失败 [{event.canonical_title[:40]}]: {e}", flush=True)
             return None
 
-    async def analyze_event_async(self, event, article_map, semaphore, fulltexts_map=None):
+    async def analyze_event_async(
+        self,
+        event: NewsEvent,
+        article_map: dict[str, RawNewsArticle],
+        semaphore: asyncio.Semaphore,
+        fulltexts_map: dict | None = None,
+    ) -> tuple | None:
         async with semaphore:
             loop = asyncio.get_event_loop()
             fts = (fulltexts_map or {}).get(event.event_id)
@@ -188,7 +218,14 @@ class AnalystAgent:
             )
             return (event, result) if result else None
 
-    async def analyze_batch_async(self, events, article_map, max_events=None, concurrency=3, fulltexts_map=None):
+    async def analyze_batch_async(
+        self,
+        events: list[NewsEvent],
+        article_map: dict[str, RawNewsArticle],
+        max_events: int | None = None,
+        concurrency: int = 3,
+        fulltexts_map: dict | None = None,
+    ) -> list[tuple]:
         target = events[:max_events] if max_events else events
         n_ft = sum(1 for e in target if (fulltexts_map or {}).get(e.event_id))
         print(f"\n  🧪 Analyst Agent — {len(target)} 个事件（并发{concurrency}，{n_ft} 个含原文全文）", flush=True)
@@ -303,10 +340,15 @@ def _analysis_to_item(event, analysis, rank, category_id, article_map=None) -> R
 class ChiefEditorAgent:
     """总编辑：Python做分类排序（确定性），LLM只写导读。"""
 
-    def __init__(self, llm=None):
+    def __init__(self, llm=None) -> None:
         self.llm = llm or LLMClient()
 
-    def finalize(self, analyzed_results, report_date=None, article_map=None):
+    def finalize(
+        self,
+        analyzed_results: list[tuple],
+        report_date: str | None = None,
+        article_map: dict[str, RawNewsArticle] | None = None,
+    ) -> DailyReport:
         if not report_date:
             report_date = report_today()
 
@@ -347,6 +389,7 @@ class ChiefEditorAgent:
             ("policy", "政策与监管"),
             ("research", "学术与研究突破"),
             ("industry", "市场与产业动态"),
+            ("us_stocks", "美股盘前资讯"),
         ]
 
         sections = []
@@ -397,7 +440,7 @@ class ChiefEditorAgent:
             generated_at=datetime.now(timezone.utc),
         )
 
-    def _write_summary(self, top_news):
+    def _write_summary(self, top_news: list[tuple]) -> str | None:
         """用LLM写今日导读。"""
         if len(top_news) < 3:
             return None

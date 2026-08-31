@@ -18,6 +18,8 @@ from datetime import datetime, timezone
 from app.utils.timeutil import report_now, report_today
 from pathlib import Path
 from urllib.parse import urlparse, urlunparse
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import asyncio
 
 from pydantic import BaseModel, Field, HttpUrl
 
@@ -232,7 +234,7 @@ def dedup_by_title(
 
 class NewsCollector:
     """
-    新闻采集器。
+    新闻采集器 - 并发优化版
 
     用法:
         collector = NewsCollector(api_key="...")
@@ -246,8 +248,13 @@ class NewsCollector:
         tavily_api_key: str | None = None,
         output_dir: str = "data/raw",
         use_tavily: bool = True,
+        max_workers: int = 5,
     ) -> None:
+        from app.config import get_concurrency_config
         import os
+
+        self.config = get_concurrency_config()
+        self.max_workers = max_workers or self.config.collector_max_workers
         self.client = AnySearchClient(api_key=api_key)
         self.use_tavily = use_tavily
         if use_tavily:
@@ -258,6 +265,7 @@ class NewsCollector:
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
         self.last_stats: dict = {}
+        self.executor = ThreadPoolExecutor(max_workers=self.max_workers)
 
     async def collect(
         self,
@@ -322,17 +330,21 @@ class NewsCollector:
 
         # 3. Tavily 补充搜索（按分类均衡选取 + 时间限定）
         if self.tavily:
-            sem = asyncio.Semaphore(5)
+            sem = asyncio.Semaphore(self.config.semaphore_limit)
 
             async def tavily_search(q):
                 async with sem:
-                    items = await self.tavily.search(
-                        q.query,
-                        max_results=min(q.max_results, 7),
-                        search_depth="advanced",
-                        time_range=tavily_time_range,
-                    )
-                    return (q, items)
+                    try:
+                        items = await self.tavily.search(
+                            q.query,
+                            max_results=min(q.max_results, 7),
+                            search_depth="advanced",
+                            time_range=tavily_time_range,
+                        )
+                        return (q, items)
+                    except Exception as e:
+                        print(f"  ⚠️ Tavily查询失败 [{q.query}]: {e}", flush=True)
+                        return None
 
             # 按分类分组，每个分类选代表性查询，保证覆盖均衡
             by_cat: dict[str, list[SearchQuery]] = {}
@@ -355,18 +367,22 @@ class NewsCollector:
             supplement_queries = supplement_queries[:tavily_top_n]
 
             print(f"  🔍 Tavily 补充搜索（{len(supplement_queries)} 条，覆盖 {len(cats)} 个分类，time_range={tavily_time_range}）", flush=True)
-            tasks = [tavily_search(q) for q in supplement_queries]
+            # 优化：并行执行所有Tavily查询
+            print(f"  🔍 Tavily 补充搜索（{len(supplement_queries)} 条，覆盖 {len(cats)} 个分类，time_range={tavily_time_range}）", flush=True)
+
+            # 过滤掉None结果
             results = await asyncio.gather(*tasks, return_exceptions=True)
+            valid_results = [r for r in results if r is not None and not isinstance(r, Exception)]
 
             tavily_count = 0
-            for r in results:
-                if isinstance(r, Exception):
-                    continue
-                q, items = r
-                for item in items:
-                    art = normalize_result(item, query=q)
-                    articles.append(art)
-                    tavily_count += 1
+            for r in valid_results:
+                if r:
+                    q, items = r
+                    if items:
+                        for item in items:
+                            art = normalize_result(item, query=q)
+                            articles.append(art)
+                            tavily_count += 1
 
             print(f"     Tavily 新增: {tavily_count} 篇", flush=True)
 

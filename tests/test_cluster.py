@@ -3,7 +3,7 @@ import unittest
 from datetime import datetime, timezone
 
 import _path  # noqa: F401
-from app.pipeline.cluster import cluster_articles
+from app.pipeline.cluster import cluster_articles, build_article_map
 from app.pipeline.collector import RawNewsArticle
 
 NOW = datetime.now(timezone.utc)
@@ -45,6 +45,25 @@ class TestCluster(unittest.TestCase):
         ]
         events = cluster_articles(arts, title_threshold=0.6)
         self.assertEqual(len(events), 2)
+
+    def test_article_ids_resolve_to_real_articles(self):
+        # 回归：分桶聚类后每个事件的 article_ids 必须是真实 article_id，
+        # 且全部文章被恰好覆盖（此前被错误改写成索引字符串/漏并）。
+        arts = [
+            mk("https://a.com/1", "OpenAI 发布新一代 GPT 模型"),
+            mk("https://b.com/2", "OpenAI 推出新一代 GPT 模型功能"),
+            mk("https://c.com/3", "Google 发布全新 Gemini", "google.com"),
+            mk("https://d.com/4", "某机构发布行业季度报告", "research.org"),
+        ]
+        article_map = build_article_map(arts)
+        events = cluster_articles(arts, title_threshold=0.6)
+
+        covered = []
+        for ev in events:
+            for aid in ev.article_ids:
+                self.assertIn(aid, article_map, f"article_id {aid} 无法解析到文章")
+                covered.append(aid)
+        self.assertEqual(sorted(covered), sorted(a.article_id for a in arts))
 
 
 if __name__ == "__main__":

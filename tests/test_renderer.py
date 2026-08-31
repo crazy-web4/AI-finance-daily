@@ -70,5 +70,33 @@ class TestRenderer(unittest.TestCase):
         self.assertIn("<html", html)
 
 
+class TestHtmlEscaping(unittest.TestCase):
+    """第三轮 P0-1: LLM/上游文本进 HTML 前必须逐段转义，防注入"""
+
+    def mk_report_with_details(self, details):
+        items = [ReportItem(
+            item_id="item_001", event_id="evt_1", rank=1, category=Category.TOP_NEWS,
+            title="test", details=details, word_count=10)]
+        return DailyReport(
+            report_id="daily_t", report_date="2026-08-24",
+            time_window_start=NOW, time_window_end=NOW,
+            total_items=1, total_word_count=10,
+            sections=[ReportSection(section_id=Category.TOP_NEWS, section_name="今日头条",
+                                    item_count=1, items=items)],
+        )
+
+    def test_html_in_details_escaped(self):
+        html = PDFRenderer().render_html(
+            self.mk_report_with_details('恶意内容 <img src=x onerror="alert(1)">'))
+        self.assertNotIn("<img src=x", html)
+        self.assertIn("&lt;img", html)
+
+    def test_multiline_injection_escaped(self):
+        details = "正常段落。\n\n<script>steal()</script>"
+        html = PDFRenderer().render_html(self.mk_report_with_details(details))
+        self.assertNotIn("<script>", html)
+        self.assertIn("&lt;script&gt;", html)
+
+
 if __name__ == "__main__":
     unittest.main()
