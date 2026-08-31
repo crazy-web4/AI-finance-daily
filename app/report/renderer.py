@@ -32,6 +32,7 @@ class RenderConfig(BaseModel):
 
     output_dir: str = "data/reports"
     filename_pattern: str = "AI行业全球动态日报_{date}@Cyber_Gm.pdf"
+    watermark_text: str = "AI财经日报 广明 Cyber_Gm"  # 中央水印文字前缀，渲染时会拼接日期
 
 
 class PDFRenderer:
@@ -71,9 +72,32 @@ class PDFRenderer:
         css_path = Path(self.config.template_dir) / "css" / "style.css"
         if css_path.exists():
             css = css_path.read_text(encoding="utf-8")
+            # 动态生成 SVG 水印（带日期），打印时每页显示
+            wm_text = self.config.watermark_text + " " + report.report_date.replace("-", ".")
+            import html as _html
+            wm_escaped = _html.escape(wm_text)
+            svg_parts = [
+                "data:image/svg+xml;utf8,",
+                "<svg xmlns='http://www.w3.org/2000/svg' width='600' height='800'>",
+                "<text x='300' y='420' font-family='Noto Serif SC, serif' ",
+                "font-size='72' font-weight='700' ",
+                "fill='rgba(180,150,120,0.10)' ",
+                "text-anchor='middle' transform='rotate(-35 300 420)'>",
+                wm_escaped,
+                "</text></svg>",
+            ]
+            svg = "".join(svg_parts)
+            wm_css_lines = [
+                "background-image: url('" + svg + "');",
+                "  background-repeat: repeat;",
+                "  background-attachment: fixed;",
+            ]
+            wm_css = "\n".join(wm_css_lines)
+            css = css.replace("/* __WATERMARK_SVG__ */", wm_css)
+            style_tag = "<style>" + css + "</style>"
             html = html.replace(
                 '<link rel="stylesheet" href="css/style.css">',
-                f"<style>{css}</style>",
+                style_tag,
             )
         return html
 
@@ -110,7 +134,7 @@ class PDFRenderer:
             "subtitle_tags": self.config.subtitle_tags,
             "report_date": report.report_date,
             "report_date_cn": self._format_date_cn(report.report_date),
-            "watermark_text": f"广明 {report.report_date.replace('-', '.')}",
+            "watermark_text": f"{self.config.watermark_text} {report.report_date.replace("-", ".")}",
             "sections": sections,
             "editor_summary": self._render_paragraphs(safe_render_clean(report.editor_summary)) if report.editor_summary else None,
         }
@@ -121,24 +145,25 @@ class PDFRenderer:
         return f"{dt.year}年{dt.month}月{dt.day}日"
 
     @staticmethod
-    @staticmethod
-    def _render_paragraphs(text):
+    def _render_paragraphs(text: str | None) -> Markup:
         """
         第二轮 R6: 把多段正文转成 HTML <p> 段落。
         LLM 输出的 details/analysis 用空行分段，直接塞进 HTML 会塌成一段。
-        返回 Markup 对象（autoescape 下不转义）。
+        第三轮 P0: 逐段 html.escape 后再拼 <p>——Markup 会绕过 autoescape，
+        不转义则上游网页片段可注入标签进 PDF。
         """
+        import html as _html
         if not text:
-            return ""
+            return Markup("")
         text = text.strip()
         if not text:
-            return ""
+            return Markup("")
         # 按空行分段（兼容 CRLF 和 LF）
         normalized = text.replace(chr(13) + chr(10), chr(10))
         raw_paras = [p.strip() for p in normalized.split(chr(10) + chr(10)) if p.strip()]
         if not raw_paras:
-            return Markup(text)
-        paras_html = "".join("<p>" + p + "</p>" for p in raw_paras)
+            return Markup(_html.escape(text))
+        paras_html = "".join("<p>" + _html.escape(p) + "</p>" for p in raw_paras)
         return Markup(paras_html)
 
     # ── PDF 渲染 ───────────────────────────────────

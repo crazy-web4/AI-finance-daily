@@ -1,0 +1,46 @@
+# AI 财经日报应用配置
+# 环境变量优先级高于此配置文件
+
+# 缓存配置
+cache:
+  enabled: true
+  max_memory_items: 1000
+  disk_ttl_hours: 24
+  compression: true
+
+# 并发配置
+concurrency:
+  collector_max_workers: 5
+  analyzer_max_workers: 3
+  extract_max_workers: 4
+  semaphore_limit: 10
+
+# 监控配置
+monitoring:
+  enabled: true
+  log_level: "INFO"
+  metrics_retention_days: 30
+  performance_report_interval: 3600  # 1小时
+
+# LLM配置
+llm:
+  model: "doubao-pro-128k-240515"
+  base_url: ""
+  api_key: ""
+  temperature: 0.3
+  max_retries: 2
+  base_delay: 1.0
+  batch_size: 5
+
+# 基础配置
+timezone: "Asia/Shanghai"
+data_dir: "data"
+log_dir: "logs"
+environment: "development"
+
+# 从环境变量读取的配置：
+# - ARK_API_KEY / OPENAI_API_KEY: LLM API密钥
+# - ARK_BASE_URL / OPENAI_BASE_URL: LLM 基础URL
+# - REPORT_TIMEZONE: 报告时区
+# - ENVIRONMENT: 运行环境 (development/staging/production)
+# - LOG_DIR: 日志目录

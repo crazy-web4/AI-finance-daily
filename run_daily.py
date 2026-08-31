@@ -12,15 +12,18 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import os
 import sys
 import time
-from datetime import datetime, timezone
 from pathlib import Path
 
 from dotenv import load_dotenv
 load_dotenv()
 
-from app.search.queries import load_strategy, generate_queries
+from app.config import init_config
+from app.utils.logger import get_logger
+from app.utils.performance import get_performance_monitor
+from app.utils.resource import ResourceOptimizer
 from app.pipeline.collector import NewsCollector, RawNewsArticle
 from app.pipeline.cluster import cluster_articles, build_article_map
 from app.pipeline.backfill import backfill_empty_categories
@@ -31,8 +34,10 @@ from app.agents.pipeline import AnalystAgent, ChiefEditorAgent
 from app.agents.factcheck import FactCheckerAgent, ground_key_data
 from app.report.renderer import PDFRenderer
 from app.utils.runlog import RunReport
+from app.utils.alert import send_alert
 from app.utils.text_cleaner import clean_full
 from app.search.anysearch import AnySearchClient
+from app.search.queries import load_strategy, generate_queries  # 第三轮: 补齐 collect_articles 缺失导入
 
 
 def load_api_key() -> str:
@@ -44,7 +49,7 @@ def load_api_key() -> str:
     return key
 
 
-async def collect_articles(test_mode: bool, max_per_batch: int = 0, tavily_n: int = 20, today: str = "") -> list[RawNewsArticle]:
+async def collect_articles(test_mode: bool, max_per_batch: int = 0, tavily_n: int = 20, today: str = "") -> tuple[list[RawNewsArticle], dict]:
     """步骤1：采集新闻。"""
     print("\n" + "=" * 60)
     print("  STEP 1 / 4  新闻采集")
@@ -100,7 +105,6 @@ def load_from_file(path: str) -> list[RawNewsArticle]:
 async def do_extract_fulltexts(
     selected_events, article_map, api_key,
     max_articles: int = 2, max_chars: int = 3000, concurrency: int = 4,
-    cache_dir: str = "data/cache/extract",
     cache_ttl_days: int = 7,
 ) -> tuple[dict, dict]:
     """
@@ -109,49 +113,22 @@ async def do_extract_fulltexts(
 
     返回: (fulltexts_map, stats_dict)
       stats: {"total_urls", "cache_hit", "api_success", "api_failed", "events_with_text"}
+
+    第三轮 T12: URL 级缓存收敛到 SmartCache（cache_extract_text/get_cached_extract_text），
+    删除自造 sha1 文件缓存，全项目单一缓存实现。
     """
-    import hashlib
-    import os
-    import time
+    from app.utils.cache import cache_extract_text, get_cached_extract_text
 
     client = AnySearchClient(api_key=api_key)
     sem = asyncio.Semaphore(concurrency)
     out: dict[str, list] = {}
-
-    # 缓存目录
-    os.makedirs(cache_dir, exist_ok=True)
-    cache_ttl_sec = cache_ttl_days * 86400
-
-    def _cache_path(url: str) -> str:
-        key = hashlib.sha256(url.encode("utf-8")).hexdigest()[:16]
-        return os.path.join(cache_dir, key + ".txt")
-
-    def _cache_get(url: str) -> str | None:
-        p = _cache_path(url)
-        try:
-            if os.path.exists(p):
-                age = time.time() - os.path.getmtime(p)
-                if age < cache_ttl_sec:
-                    with open(p, "r", encoding="utf-8") as f:
-                        return f.read() or None
-        except Exception:
-            pass
-        return None
-
-    def _cache_set(url: str, text: str) -> None:
-        try:
-            p = _cache_path(url)
-            with open(p, "w", encoding="utf-8") as f:
-                f.write(text)
-        except Exception:
-            pass
 
     stats = {"total_urls": 0, "cache_hit": 0, "api_success": 0, "api_failed": 0}
 
     async def fetch(url: str) -> str:
         stats["total_urls"] += 1
         # 先查缓存
-        cached = _cache_get(url)
+        cached = get_cached_extract_text(url)
         if cached is not None:
             stats["cache_hit"] += 1
             return cached
@@ -162,7 +139,7 @@ async def do_extract_fulltexts(
                 text = clean_full((md or "").strip())[:max_chars]
                 if text:
                     stats["api_success"] += 1
-                    _cache_set(url, text)
+                    cache_extract_text(url, text, ttl_hours=cache_ttl_days * 24)
                 else:
                     stats["api_failed"] += 1
                 return text
@@ -243,17 +220,34 @@ def do_cluster(articles):
     print("  STEP 2 / 4  事件聚类")
     print("=" * 60, flush=True)
 
-    events = cluster_articles(articles, title_threshold=0.6)
+    # 第三轮 T22: 聚类阈值接 yaml（与 dedup 阈值统一配置口径）
+    threshold = 0.6
+    try:
+        from app.search.queries import load_strategy
+        threshold = float(
+            load_strategy()["search_strategy"]["defaults"]
+            .get("cluster_title_threshold", 0.6)
+        )
+    except Exception:
+        pass
+    events = cluster_articles(articles, title_threshold=threshold)
     multi = [e for e in events if e.article_count > 1]
     print(f"  ✅ {len(articles)} 篇 → {len(events)} 个事件（{len(multi)}个多源）", flush=True)
     return events
 
 
-async def do_agent_analysis(events, article_map, max_events=6, concurrency=3, fulltexts_map=None):
+async def do_agent_analysis(events, article_map, max_events=6, concurrency=None, fulltexts_map=None):
     """步骤3：Agent 分析 + 总编。"""
     print("\n" + "=" * 60)
     print("  STEP 3 / 4  Agent 分析与编辑")
     print("=" * 60, flush=True)
+
+    # 并发数未显式指定时，按当前系统负载动态调整（低负载提速、高负载减压）
+    if concurrency is None:
+        optimizer = ResourceOptimizer.from_config()
+        load = optimizer.system_load()
+        concurrency = optimizer.recommend(load).analyzer
+        print(f"  ⚙️ 动态并发：系统负载 {load:.2f} → 分析并发 {concurrency}", flush=True)
 
     llm = LLMClient()
     analyst = AnalystAgent(llm=llm)
@@ -271,6 +265,7 @@ async def do_agent_analysis(events, article_map, max_events=6, concurrency=3, fu
     # 事实核查（架构评审 #6）
     checker = FactCheckerAgent(llm=llm)
     quality_flags: list[str] = []
+    verify_jobs: list[tuple] = []
     for event, analysis in analyzed:
         texts: list[str] = []
         for ft in (fulltexts_map or {}).get(event.event_id, []):
@@ -291,15 +286,39 @@ async def do_agent_analysis(events, article_map, max_events=6, concurrency=3, fu
                     f"key_data 无来源剔除 [{analysis.get('title', '')[:25]}]: {dropped}"
                 )
 
-        # 6b. LLM 复核: 高分条目(>=85)二次交叉核对
+        # 6b. LLM 复核: 高分条目(>=85)二次交叉核对（第三轮 T19: 并发执行）
         if analysis.get("importance_score", 0) >= 85 and source_text:
-            vr = checker.verify(analysis, source_text)
+            verify_jobs.append((event, analysis, source_text))
+
+    if verify_jobs:
+        loop = asyncio.get_running_loop()
+        vsem = asyncio.Semaphore(concurrency or 3)
+
+        async def _verify(analysis: dict, source_text: str):
+            async with vsem:
+                return await loop.run_in_executor(None, checker.verify, analysis, source_text)
+
+        vrs = await asyncio.gather(*[_verify(a, t) for _, a, t in verify_jobs])
+        for (event, analysis, _), vr in zip(verify_jobs, vrs):
             if vr:
                 if vr.corrected_details:
                     analysis["details"] = vr.corrected_details
                     quality_flags.append(f"复核修订 details [{analysis.get('title', '')[:25]}]")
                 for c in vr.unsupported_claims:
                     quality_flags.append(f"无依据表述 [{analysis.get('title', '')[:25]}]: {c}")
+
+    # 第三轮 T10: 核查/溯源后的版本回写指纹缓存，重跑不再重复 LLM 复核
+    if analyst.use_cache:
+        from app.agents.pipeline import _event_fingerprint
+        from app.utils.cache import cache_event_analysis
+        for event, analysis in analyzed:
+            try:
+                cache_event_analysis(
+                    _event_fingerprint(event, (fulltexts_map or {}).get(event.event_id)),
+                    analysis,
+                )
+            except Exception:
+                pass
 
     if quality_flags:
         print(f"\n  🛡️ 事实核查: {len(quality_flags)} 条标记", flush=True)
@@ -338,25 +357,50 @@ async def do_pdf(report):
     return pdf_path
 
 
+def init_system():
+    """初始化系统"""
+    # 第三轮 T14: 批处理一次性进程不需要配置热更新，避免空转轮询线程
+    config = init_config("config/app_config.yaml", watch=False)
+
+    # 第三轮 T1/T8: LOG_TO_CONSOLE 必须在 get_logger 之前设置，开关才生效
+    os.environ["LOG_TO_CONSOLE"] = "true" if config.environment == "development" else "false"
+
+    # 设置日志
+    logger = get_logger("run_daily")
+    logger.info("系统初始化", environment=config.environment)
+
+    # 性能监控
+    perf_monitor = get_performance_monitor()
+
+    return config, logger, perf_monitor
+
+
 async def main():
     parser = argparse.ArgumentParser(description="AI 财经日报 · 端到端生成")
+    parser.add_argument("--config", type=str, default="config/app_config.yaml",
+                       help="配置文件路径")
     parser.add_argument("--test", action="store_true", help="测试模式")
     parser.add_argument("--full", action="store_true", help="全量模式")
     parser.add_argument("--from-file", type=str, help="从已采集的JSON文件开始")
     parser.add_argument("--max-events", type=int, default=None, help="分析事件数上限 (默认: --test 6 / 否则 18)")
-    parser.add_argument("--concurrency", type=int, default=3, help="Agent并发数 (默认3)")
+    parser.add_argument("--concurrency", type=int, default=None, help="Agent并发数 (默认按系统负载动态调整)")
     parser.add_argument("--no-agent", action="store_true", help="跳过Agent")
     parser.add_argument("--no-extract", action="store_true", help="跳过原文全文提取(省额度)")
     parser.add_argument("--backfill", action="store_true", help="空栏目自动补全近7天数据")
     parser.add_argument("--no-pdf", action="store_true", help="跳过PDF")
     parser.add_argument("--queries-per-batch", type=int, default=0, help="每批次最多查询数(0=全部)")
     parser.add_argument("--tavily-n", type=int, default=20, help="Tavily补充查询数")
+    parser.add_argument("--no-monitoring", action="store_true", help="禁用性能监控")
     args = parser.parse_args()
+
+    # 初始化系统
+    config, logger, perf_monitor = init_system()
 
     start_time = time.time()
     today = report_today()
     rr = RunReport(mode="test" if args.test else ("full" if args.full else "from_file"))
 
+    logger.info("AI 财经日报生成器启动", date=today)
     print("🚀 AI 财经日报生成器", flush=True)
     print(f"📅 日期: {today}", flush=True)
 
@@ -381,14 +425,18 @@ async def main():
             pre_count = len(articles)
             articles = await backfill_empty_categories(articles, load_api_key())
             rr.set("backfill_added", len(articles) - pre_count)
-            rr.stage("backfill")
-        rr.stage("collect")
+            perf_monitor.record_timing("backfill", rr.stage("backfill"))
+        perf_monitor.record_timing("collect", rr.stage("collect"))
         rr.set("articles", len(articles))
 
         # 护栏（架构评审 #15）: 文章数过少视为搜索异常，终止而非产出空报
         if len(articles) < 5:
             rr.flag(f"文章数过少({len(articles)})，疑似搜索异常")
             print(f"  ❌ 文章数过少（{len(articles)} 篇），疑似搜索异常，终止本次运行", flush=True)
+            send_alert(
+                f"采集异常终止：仅 {len(articles)} 篇文章（阈值5），疑似 key 失效/网络故障",
+                level="error",
+            )
             sys.exit(1)
 
         # Step 2: 聚类
@@ -405,7 +453,7 @@ async def main():
                     print(f"     - [{d}] {e.canonical_title[:38]} (相似度 {sim:.2f})", flush=True)
         else:
             print("  🧠 跨天去重: 无历史事件索引，跳过", flush=True)
-        rr.stage("cluster")
+        perf_monitor.record_timing("cluster", rr.stage("cluster"))
         rr.set("events", len(events))
 
         # 保存聚类结果
@@ -436,7 +484,7 @@ async def main():
                 f" (缓存命中 {extract_stats['cache_hit']}/{extract_stats['total_urls']})",
                 flush=True,
             )
-        rr.stage("extract")
+        perf_monitor.record_timing("extract", rr.stage("extract"))
         extract_stats_final = extract_stats if not args.no_extract else {"skipped": True}
         rr.set("fulltext_events", len(fulltexts_map))
         rr.set("extract_stats", extract_stats_final)
@@ -448,7 +496,7 @@ async def main():
             concurrency=args.concurrency,
             fulltexts_map=fulltexts_map,
         )
-        rr.stage("analyze")
+        perf_monitor.record_timing("analyze", rr.stage("analyze"))
         rr.set("llm_stats", llm_stats)
         rr.set("quality_flags", report.quality_flags)
 
@@ -465,7 +513,7 @@ async def main():
 
         # Step 4: PDF
         pdf_path = await do_pdf(report)
-        rr.stage("pdf")
+        perf_monitor.record_timing("pdf", rr.stage("pdf"))
 
         elapsed = time.time() - start_time
         print("\n" + "=" * 60, flush=True)
@@ -478,10 +526,16 @@ async def main():
     except Exception as e:
         ok = False
         rr.flag(f"运行异常: {type(e).__name__}: {e}")
+        # 第三轮 P0-4: cron 场景失败主动告警（webhook 未配置时静默跳过）
+        send_alert(
+            f"日报生成失败 [{rr.data['mode']}]: {type(e).__name__}: {str(e)[:200]}",
+            level="error",
+        )
         raise
     finally:
-        # 架构评审 #16: 运行报告落盘（成功/失败都写）
+        # 架构评审 #16 + 第三轮 T16: 运行报告落盘（成功/失败都写），并入性能统计
         try:
+            rr.set("performance", perf_monitor.get_stats())
             rf = rr.finish(f"data/reports/{today}", ok=ok)
             print(f"\n  📊 运行报告: {rf}", flush=True)
         except Exception:

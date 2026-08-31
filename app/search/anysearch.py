@@ -210,6 +210,21 @@ def _extract_published_date(url: str, text: str) -> datetime | None:
         if dt:
             candidates.append(dt)
 
+    # 第三轮 T6: 无年份月日信号（"8/28 收盘"、"8月28日"）——按当前年份推断，
+    # 超出 [now-400d, now+1d] 的推断年由 valid() 自然淘汰；
+    # 让"M/D 旧行情"获得 published_at，从而被时效过滤正确丢弃。
+    now_year = now.year
+    for m in re.finditer(r"(\d{1,2})月(\d{1,2})日", text):
+        for y in (now_year, now_year - 1):
+            dt = _safe_date(y, int(m.group(1)), int(m.group(2)))
+            if dt:
+                candidates.append(dt)
+    for m in re.finditer(r"(?<![\d/.-])(\d{1,2})/(\d{1,2})(?![\d/])", text):
+        for y in (now_year, now_year - 1):
+            dt = _safe_date(y, int(m.group(1)), int(m.group(2)))
+            if dt:
+                candidates.append(dt)
+
     best = None
     for dt in sorted(candidates, reverse=True):
         v = valid(dt)

@@ -22,42 +22,52 @@ from app.pipeline.collector import (
 )
 
 
-# 每个栏目的补全搜索词（高质量、广谱的关键词）
-BACKFILL_QUERIES: dict[str, list[str]] = {
-    "funding": [
-        "AI startup funding round this week",
-        "AI company valuation 2026",
-        "人工智能 融资 本周",
-        "AI venture capital investment",
-        "AI 并购 收购 最新",
-    ],
-    "industry": [
-        "AI chip market update this week",
-        "AI data center construction 2026",
-        "AI 算力 产业动态 本周",
-        "AI industry partnership announcement",
-        "人工智能 应用落地 最新",
-        "AI 机器人 产业 本周",
-    ],
-    "model_tech": [
-        "new AI model release this week",
-        "AI agent framework new",
-        "大模型 发布 本周",
-        "AI coding agent update",
-    ],
-    "policy": [
-        "AI regulation policy update this week",
-        "AI 监管 政策 本周",
-        "EU AI Act latest",
-        "China AI regulation new",
-    ],
-    "research": [
-        "arXiv new AI paper this week",
-        "AI research breakthrough 2026",
-        "AI 论文 最新 本周",
-        "NeurIPS ICML AI paper",
-    ],
-}
+def build_backfill_queries() -> dict[str, list[str]]:
+    """每个栏目的补全搜索词（高质量、广谱关键词）。
+
+    第三轮 T5: 年份按当前日期动态生成，避免第一轮 #5 时间硬编码炸弹复燃。
+    """
+    from app.utils.timeutil import report_now
+    year = str(report_now().year)
+    return {
+        "funding": [
+            "AI startup funding round this week",
+            f"AI company valuation {year}",
+            "人工智能 融资 本周",
+            "AI venture capital investment",
+            "AI 并购 收购 最新",
+        ],
+        "industry": [
+            "AI chip market update this week",
+            f"AI data center construction {year}",
+            "AI 算力 产业动态 本周",
+            "AI industry partnership announcement",
+            "人工智能 应用落地 最新",
+            "AI 机器人 产业 本周",
+        ],
+        "model_tech": [
+            "new AI model release this week",
+            "AI agent framework new",
+            "大模型 发布 本周",
+            "AI coding agent update",
+        ],
+        "policy": [
+            "AI regulation policy update this week",
+            "AI 监管 政策 本周",
+            "EU AI Act latest",
+            "China AI regulation new",
+        ],
+        "research": [
+            "arXiv new AI paper this week",
+            f"AI research breakthrough {year}",
+            "AI 论文 最新 本周",
+            "NeurIPS ICML AI paper",
+        ],
+    }
+
+
+# 兼容旧引用
+BACKFILL_QUERIES = build_backfill_queries()
 
 # 每个栏目最少应有多少条事件
 MIN_ITEMS_PER_CATEGORY = 5
@@ -95,9 +105,9 @@ async def backfill_empty_categories(
         status = "✅" if cnt >= min_items else "⚠️"
         print(f"    {status} {cat:15s} {cnt:3d} 条", flush=True)
 
-    # 找出需要补全的分类
+    # 找出需要补全的分类（第三轮 T5: 查询词按运行日期动态生成）
     need_backfill = []
-    for cat, queries in BACKFILL_QUERIES.items():
+    for cat, queries in build_backfill_queries().items():
         current = cat_counts.get(cat, 0)
         if current < min_items:
             need_backfill.append((cat, queries))
@@ -141,15 +151,15 @@ async def backfill_empty_categories(
     finally:
         await client.close()
 
-    # 时效性过滤（补全用7天窗口，但优先近期的）
+    # 时效性过滤（第三轮 T5: 窗口天数接 time_window_days 参数，不再写死）
     from datetime import datetime, timezone, timedelta
-    cutoff = datetime.now(timezone.utc) - timedelta(days=7)
+    cutoff = datetime.now(timezone.utc) - timedelta(days=time_window_days)
     new_articles_filtered = [
         a for a in new_articles
         if not a.published_at or a.published_at >= cutoff
     ]
     if len(new_articles_filtered) < len(new_articles):
-        print(f"    ⏰ 7天内: {len(new_articles_filtered)}/{len(new_articles)} 篇", flush=True)
+        print(f"    ⏰ {time_window_days}天内: {len(new_articles_filtered)}/{len(new_articles)} 篇", flush=True)
         new_articles = new_articles_filtered
 
     # 合并 + 全局去重

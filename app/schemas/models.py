@@ -43,6 +43,7 @@ class Category(str, Enum):
     POLICY = "policy"
     RESEARCH = "research"
     INDUSTRY = "industry"
+    US_STOCKS = "us_stocks"
 
 
 CATEGORY_NAMES = {
@@ -52,6 +53,7 @@ CATEGORY_NAMES = {
     Category.POLICY: "政策与监管",
     Category.RESEARCH: "学术与研究突破",
     Category.INDUSTRY: "市场与产业动态",
+    Category.US_STOCKS: "美股盘前资讯",
 }
 
 CATEGORY_ORDER = [
@@ -61,6 +63,7 @@ CATEGORY_ORDER = [
     Category.POLICY,
     Category.RESEARCH,
     Category.INDUSTRY,
+    Category.US_STOCKS,
 ]
 
 
@@ -316,8 +319,8 @@ class DailyReport(BaseModel):
     @classmethod
     def validate_sections_order(cls, v: list[ReportSection]) -> list[ReportSection]:
         """确保栏目顺序正确且完整。"""
-        if len(v) > 6:
-            raise ValueError("栏目不能超过6个")
+        if len(v) > 7:
+            raise ValueError("栏目不能超过7个")
         # 检查是否有重复
         ids = [s.section_id for s in v]
         if len(ids) != len(set(ids)):

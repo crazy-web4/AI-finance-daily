@@ -22,8 +22,13 @@ def load_strategy(config_path: str | Path = "config/search_strategy.yaml") -> di
 
 
 def _add_time_qualifier(query: str, category: str | None = None) -> str:
-    """给查询词注入时间限定，提升时效性。时间词全部按当前日期动态生成。"""
-    now = datetime.now()
+    """给查询词注入时间限定，提升时效性。时间词全部按当前日期动态生成。
+
+    第三轮 T21: 用报告时区（REPORT_TIMEZONE）而非本地时区，
+    避免 UTC 机器凌晨运行时"今日"限定词写错日期。
+    """
+    from app.utils.timeutil import report_now
+    now = report_now()
     year = now.strftime("%Y")
     last_year = str(int(year) - 1)
     month_en = now.strftime("%B %Y")

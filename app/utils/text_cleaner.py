@@ -101,6 +101,56 @@ def fix_broken_words(text: str) -> str:
     return text
 
 
+# ═══════════════════════════════════════════════════
+# 内联水印碎片（第三轮 T3）
+# ═══════════════════════════════════════════════════
+# 头条/新浪系竖排日期水印（如 2026-08-28）被抽取器打散成内联碎片
+# （"20"/"26"/"08"/"28"/"8-"/"-0"）散落正文，旧版 clean_full 只覆盖
+# "空格包围单字"与"长行尾单数字"，拦不住内联碎片。
+#
+# 安全边界（宁可漏删、不可误删真实数字）:
+#  - 零风险类: 破折号碎片（"汉8-汉/汉8-行尾/-0+数字/0-+数字"）在合法
+#    财经文本中几乎不内联出现，直接删；
+#  - 上下文限定类: "20/26/08/28" 两位数字仅当 前字非约数词 且 后字非量词
+#    时才删——"约20亿美元/前20家/超20起/8月20日" 全部保留。
+
+INLINE_SAFE_FRAGS = [
+    re.compile(r'(?<=[一-鿿])8-(?=[一-鿿A-Za-z])'),
+    re.compile(r'(?<=[一-鿿])8-$'),
+    # 行首/空白后的 "-08" 类碎片（如 "-08 月 28 日"）；
+    # 不匹配「沪指-0.11%」这类合法负数（前有非空白字符时不删）
+    re.compile(r'(?<!\S)-0(?=\d)'),
+]
+
+_NUM_PRE_EXCLUDE = set("第前约超近达共逾满隔每")
+_NUM_POST_EXCLUDE = set("亿万家个起的的天日月年位篇轮倍%％、，。；;")
+INLINE_NUM_FRAG = re.compile(r'([一-鿿])(20|26|08|28)([一-鿿])')
+
+
+def clean_inline_watermark(text: str) -> str:
+    """清理内联水印碎片。零风险类直接删；两位数字碎片带上下文白名单。"""
+    if not text:
+        return text or ""
+    for pat in INLINE_SAFE_FRAGS:
+        text = pat.sub('', text)
+
+    def _sub(m: "re.Match[str]") -> str:
+        pre, frag, post = m.group(1), m.group(2), m.group(3)
+        if pre in _NUM_PRE_EXCLUDE or post in _NUM_POST_EXCLUDE:
+            return m.group(0)
+        return pre + post
+
+    return INLINE_NUM_FRAG.sub(_sub, text)
+
+
+def light_clean(text: str) -> str:
+    """title/snippet 级轻量清洗（第三轮 T3）: 断词修复 + 内联水印碎片。
+    在 normalize 阶段对搜索层输入生效，阻断噪声进入聚类/LLM 上下文。"""
+    if not text:
+        return text or ""
+    return clean_inline_watermark(fix_broken_words(text))
+
+
 def clean_full(text: str, wm_chars: str | set | None = None, digits: bool = True) -> str:
     """
     上游原文完整清洗：水印字 → 数字水印(长行) → 断词修复。
@@ -109,6 +159,7 @@ def clean_full(text: str, wm_chars: str | set | None = None, digits: bool = True
     if not text:
         return text or ""
     text = clean_watermark_chars(text, wm_chars)
+    text = clean_inline_watermark(text)
     if digits:
         text = clean_watermark_digits(text)
     text = fix_broken_words(text)

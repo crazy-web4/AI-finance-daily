@@ -31,6 +31,18 @@ def _numeric_core(value: str) -> str:
     return m.group(0) if m else str(value).strip()
 
 
+def _core_in_text(core: str, source_text: str) -> bool:
+    """
+    第三轮 P0: 数值核心须以完整 token 形式出现在来源文本中。
+    纯子串匹配会穿透——'200' 命中 '1200'、'2005年'，等于没有防线。
+    这里用数字边界断言: core 前后不能紧邻其他数字（允许 ./, 已含在 core 内）。
+    """
+    if not core:
+        return False
+    pattern = rf"(?<![\d]){re.escape(core)}(?![\d])"
+    return re.search(pattern, source_text) is not None
+
+
 def ground_key_data(
     key_data: list[dict],
     source_text: str,
@@ -47,7 +59,7 @@ def ground_key_data(
         if not isinstance(kd, dict):
             continue
         core = _numeric_core(kd.get("value", ""))
-        if core and core in source_text:
+        if _core_in_text(core, source_text):
             grounded.append(kd)
         else:
             dropped.append(f"{kd.get('label', '?')}={kd.get('value', '?')}")

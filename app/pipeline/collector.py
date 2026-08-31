@@ -18,6 +18,7 @@ from datetime import datetime, timezone
 from app.utils.timeutil import report_now, report_today
 from pathlib import Path
 from urllib.parse import urlparse, urlunparse
+import asyncio
 
 from pydantic import BaseModel, Field, HttpUrl
 
@@ -33,6 +34,7 @@ from app.schemas.models import (  # noqa: E402
     SourceReliability,
     normalize_url as _normalize_url,
 )
+from app.utils.text_cleaner import light_clean  # 第三轮 T3
 
 
 
@@ -106,14 +108,18 @@ def normalize_result(item: SearchResultItem, query: SearchQuery | None = None) -
     domain = item.source_domain.lower().replace("www.", "")
     lang = _detect_language(item.title + " " + item.snippet)
 
+    # 第三轮 T3: title/snippet 直入聚类与 LLM 上下文，先做轻量清洗
+    # （断词修复 + 内联水印碎片），阻断搜索层噪声进入下游
+    title = light_clean(item.title.strip())
+    snippet = light_clean(item.snippet.strip())
     return RawNewsArticle(
         article_id=RawNewsArticle.make_id(str(item.url)),
-        title=item.title.strip(),
+        title=title,
         url=item.url,
         source_domain=domain,
         source_name=item.source_name,
-        snippet=item.snippet.strip(),
-        content=item.content or item.snippet.strip(),
+        snippet=snippet,
+        content=light_clean(item.content) if item.content else snippet,
         published_at=item.published_at,
         fetched_at=item.fetched_at,
         language=lang,
@@ -232,7 +238,7 @@ def dedup_by_title(
 
 class NewsCollector:
     """
-    新闻采集器。
+    新闻采集器 - 并发优化版
 
     用法:
         collector = NewsCollector(api_key="...")
@@ -247,7 +253,10 @@ class NewsCollector:
         output_dir: str = "data/raw",
         use_tavily: bool = True,
     ) -> None:
+        from app.config import get_concurrency_config
         import os
+
+        self.config = get_concurrency_config()
         self.client = AnySearchClient(api_key=api_key)
         self.use_tavily = use_tavily
         if use_tavily:
@@ -322,17 +331,21 @@ class NewsCollector:
 
         # 3. Tavily 补充搜索（按分类均衡选取 + 时间限定）
         if self.tavily:
-            sem = asyncio.Semaphore(5)
+            sem = asyncio.Semaphore(self.config.semaphore_limit)
 
             async def tavily_search(q):
                 async with sem:
-                    items = await self.tavily.search(
-                        q.query,
-                        max_results=min(q.max_results, 7),
-                        search_depth="advanced",
-                        time_range=tavily_time_range,
-                    )
-                    return (q, items)
+                    try:
+                        items = await self.tavily.search(
+                            q.query,
+                            max_results=min(q.max_results, 7),
+                            search_depth="advanced",
+                            time_range=tavily_time_range,
+                        )
+                        return (q, items)
+                    except Exception as e:
+                        print(f"  ⚠️ Tavily查询失败 [{q.query}]: {e}", flush=True)
+                        return None
 
             # 按分类分组，每个分类选代表性查询，保证覆盖均衡
             by_cat: dict[str, list[SearchQuery]] = {}
@@ -355,18 +368,20 @@ class NewsCollector:
             supplement_queries = supplement_queries[:tavily_top_n]
 
             print(f"  🔍 Tavily 补充搜索（{len(supplement_queries)} 条，覆盖 {len(cats)} 个分类，time_range={tavily_time_range}）", flush=True)
+            # 第三轮 T2: 恢复 tasks 创建（第 8 批重构误删导致 NameError）
             tasks = [tavily_search(q) for q in supplement_queries]
             results = await asyncio.gather(*tasks, return_exceptions=True)
+            valid_results = [r for r in results if r is not None and not isinstance(r, Exception)]
 
             tavily_count = 0
-            for r in results:
-                if isinstance(r, Exception):
-                    continue
-                q, items = r
-                for item in items:
-                    art = normalize_result(item, query=q)
-                    articles.append(art)
-                    tavily_count += 1
+            for r in valid_results:
+                if r:
+                    q, items = r
+                    if items:
+                        for item in items:
+                            art = normalize_result(item, query=q)
+                            articles.append(art)
+                            tavily_count += 1
 
             print(f"     Tavily 新增: {tavily_count} 篇", flush=True)
 

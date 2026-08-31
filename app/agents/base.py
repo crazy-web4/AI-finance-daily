@@ -31,7 +31,11 @@ class LLMClient:
     ) -> None:
         self.api_key = api_key or os.environ.get("ARK_API_KEY", "") or os.environ.get("OPENAI_API_KEY", "")
         self.base_url = base_url or os.environ.get("ARK_BASE_URL", "") or os.environ.get("OPENAI_BASE_URL", "")
-        self.model = model or os.environ.get("LLM_MODEL", "doubao-pro-128k-240515")
+        # 第三轮 T13: 模型名优先级 显式参数 > 环境变量 > yaml llm.model（原 yaml llm 段为死配置）
+        if not model:
+            from app.config import get_llm_config
+            model = os.environ.get("LLM_MODEL", "") or get_llm_config().model
+        self.model = model
 
         if not self.api_key:
             raise ValueError("未配置 API key，请设置 ARK_API_KEY 或 OPENAI_API_KEY")
@@ -91,47 +95,72 @@ class LLMClient:
         system_prompt: str,
         user_prompt: str,
         temperature: float = 0.3,
+        max_retries: int = 2,
+        base_delay: float = 1.0,
     ) -> str:
-        """纯文本调用。"""
-        resp = self._client.chat.completions.create(
-            model=self.model,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},
-            ],
-            temperature=temperature,
-        )
-        text = resp.choices[0].message.content or ""
-        self.stats["calls"] += 1
-        self.stats["completion_chars"] += len(text)
-        return text
+        """
+        纯文本调用（主链路 Analyst 使用）。
+        第三轮 P0: 与 chat_json 一致的指数退避重试，避免瞬时故障静默丢事件。
+        """
+        import time
+
+        last_exc: Exception | None = None
+        for attempt in range(max_retries + 1):
+            try:
+                resp = self._client.chat.completions.create(
+                    model=self.model,
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_prompt},
+                    ],
+                    temperature=temperature,
+                )
+                text = resp.choices[0].message.content or ""
+                self.stats["calls"] += 1
+                self.stats["completion_chars"] += len(text)
+                return text
+            except Exception as e:
+                last_exc = e
+                if attempt < max_retries:
+                    delay = base_delay * (2 ** attempt)
+                    time.sleep(delay)
+                    continue
+                raise RuntimeError(f"LLM 调用失败（{max_retries+1}次尝试后）: {e}") from e
 
 
-def _extract_json(text: str) -> dict[str, Any]:
+def extract_json(text: str) -> Any:
     """
-    从 LLM 输出中提取 JSON 对象。
-    支持被 ```json ... ``` 包裹的情况，也支持纯 JSON。
+    从 LLM 输出中提取 JSON 对象（第三轮 P1: 全项目唯一实现，原 base/pipeline 双版本收敛）。
+    支持 ```json 包裹、裸 JSON、尾逗号修复。
     """
     text = text.strip()
-
-    # 尝试直接解析
-    try:
-        return json.loads(text)
-    except json.JSONDecodeError:
-        pass
-
-    # 尝试提取 ```json ... ```
-    m = re.search(r'```json\s*(.*?)\s*```', text, re.DOTALL)
+    m = re.search(r'```json\s*(.*?)\s*```', text, re.DOTALL | re.IGNORECASE)
     if m:
-        return json.loads(m.group(1))
-
-    # 尝试提取第一个 { 到最后一个 }
+        text = m.group(1).strip()
     start = text.find('{')
     end = text.rfind('}')
     if start >= 0 and end > start:
-        return json.loads(text[start:end+1])
+        text = text[start:end+1]
+    try:
+        return json.loads(text)
+    except (json.JSONDecodeError, ValueError):
+        pass
+    fixed = re.sub(r',(\s*[}\]])', r'\1', text)
+    try:
+        return json.loads(fixed)
+    except (json.JSONDecodeError, ValueError):
+        pass
+    try:
+        decoder = json.JSONDecoder()
+        obj, _ = decoder.raw_decode(text)
+        return obj
+    except Exception:
+        pass
+    raise ValueError(f"无法解析 JSON: {text[:500]}")
 
-    raise ValueError(f"无法从文本中提取 JSON: {text[:200]}")
+
+# 兼容旧导入名
+_extract_json = extract_json
 
 
 class BaseAgent(Generic[T]):

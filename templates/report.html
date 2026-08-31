@@ -6,6 +6,8 @@
 <link rel="stylesheet" href="css/style.css">
 </head>
 <body data-watermark="{{ watermark_text }}">
+<!-- 全页水印（打印也可见） -->
+<div class="page-watermark">{{ watermark_text }}</div>
 
 <!-- 顶部欢迎条 -->
 <div class="top-bar">
@@ -32,11 +34,13 @@
 <div class="toc-section">
   <h2 class="toc-title-text">目 录</h2>
   <ul class="toc-simple">
+    {% set ns = namespace(vis=0) %}
     {% for section in sections %}
     {% if section.item_count > 0 %}
+    {% set ns.vis = ns.vis + 1 %}
     <li>
       <a href="#section-{{ section.section_id }}">
-        <span class="toc-cn-num">{{ loop.index | replace('1', '一') | replace('2', '二') | replace('3', '三') | replace('4', '四') | replace('5', '五') | replace('6', '六') }}</span>
+        <span class="toc-cn-num">{{ ns.vis | replace('1', '一') | replace('2', '二') | replace('3', '三') | replace('4', '四') | replace('5', '五') | replace('6', '六') | replace('7', '七') }}</span>
         <span class="toc-cn-name">{{ section.section_name }}</span>
         <span class="toc-dots">………………………………………………………………………………………………</span>
         <span class="toc-page">{{ section.item_count }} 条</span>
@@ -51,13 +55,15 @@
 <div class="section-divider-red"></div>
 
 <!-- 正文：六大栏目 -->
+{% set ns2 = namespace(vis=0) %}
 {% for section in sections %}
 {% if section.item_count > 0 %}
+{% set ns2.vis = ns2.vis + 1 %}
 <section class="content-section" id="section-{{ section.section_id }}">
 
   <h2 class="section-heading">
     <span class="cn-num">
-      {% if loop.index == 1 %}一{% elif loop.index == 2 %}二{% elif loop.index == 3 %}三{% elif loop.index == 4 %}四{% elif loop.index == 5 %}五{% elif loop.index == 6 %}六{% endif %}
+      {% if ns2.vis == 1 %}一{% elif ns2.vis == 2 %}二{% elif ns2.vis == 3 %}三{% elif ns2.vis == 4 %}四{% elif ns2.vis == 5 %}五{% elif ns2.vis == 6 %}六{% elif ns2.vis == 7 %}七{% endif %}
     </span>
     <span class="section-name-text">{{ section.section_name }}</span>
   </h2>
