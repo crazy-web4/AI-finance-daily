@@ -3,6 +3,27 @@
 > 12 条建议的**完整可直接运行的 prompt**,按批次组织。
 > 用法见 §"快速使用"。
 
+## 给所有 T12-* 任务的通用约束（必读，优先级最高）
+
+**唯一测试入口**：本仓库跑单元测试一律用 `scripts/pytest.sh -q`（单测某文件：
+`scripts/pytest.sh -q tests/test_xxx.py`）。它等价于 `python -m pytest`，但会先清除
+WorkBuddy 沙箱注入的 4 个 `CODEBUDDY_SANDBOX_BROKER_*` 环境变量。**不要**直接跑
+`.venv/bin/python -m pytest`。
+
+**环境假象红线（mkdir EEXIST）**：
+
+- 若测试失败项全部为 `PermissionError: EEXIST: file already exists, mkdir '<path>'`，
+  这是沙箱 `sitecustomize.py` 劫持 `Path.mkdir()` 造成的**环境假象**，
+  **不是项目代码缺陷**（受影响用例约 16 个，集中在 `test_cache.py` /
+  `test_analysis_cache.py` / `test_integration.py`）。
+- **禁止以任何此类失败为由修改项目源码** —— 尤其不要去"修"本来正确的
+  `mkdir(exist_ok=True)` 调用；那会把正确代码改坏，且测试会因环境波动假绿。
+- 正确动作：重跑 `scripts/pytest.sh -q`。若 `tests/test_pytest_env.py`
+  （环境哨兵）失败，即明确表示运行环境被污染，按 `AGENTS.md`
+  「测试环境的已知陷阱」一节处理。
+- 真实链路验证仍为 `.venv/bin/python run_daily.py --test`（见 `AGENTS.md`
+  「双验证约定」）。
+
 ## 文件清单
 
 | # | 文件 | 任务一句话 | 批次 | 依赖 | 预估代码 | 优先级 |
