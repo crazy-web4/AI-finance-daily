@@ -22,6 +22,34 @@
 
 **合计**:~6,000 行新增代码(主代码 + 测试)
 
+## 第 11 批任务（T11-*，自动化与情报深化）
+
+> 完整设计见 `../资深架构师优化建议_第11批_单体深化.md`。
+> 执行器:`runs/codex/runner.py`（状态机 + 断点续传），用法:
+
+```bash
+python3 runs/codex/runner.py               # 跑全部 pending（按批次）
+python3 runs/codex/runner.py --only T11-P0 # 单任务
+python3 runs/codex/runner.py --batch 1     # 单批次
+```
+
+| # | 文件 | 任务一句话 | 批次 | 依赖 | 预估代码 | 优先级 |
+|---|---|---|---|---|---|---|
+| 1 | [T11-P0.md](./T11-P0.md) | 基线固化：提交第10批改动+固定解释器+双验证 | 1 | 无 | 少量 | P0 |
+| 2 | [T11-A1.md](./T11-A1.md) | `ai-daily` 统一命令入口 | 1 | T11-P0 | 150~250 | P0 |
+| 3 | [T11-A2.md](./T11-A2.md) | 内置定时调度 `ai-daily schedule` | 1 | T11-A1 | 250~400 | P0 |
+| 4 | [T11-B1.md](./T11-B1.md) | 公司档案与时间线 `ai-daily company` | 2 | 无 | 300~450 | P0 |
+| 5 | [T11-B2.md](./T11-B2.md) | 看板内联 SVG 图表 | 2 | T11-B1 | 250~350 | P1 |
+| 6 | [T11-B3.md](./T11-B3.md) | 精选 RSS 源摄入 `ai-daily sources` | 2 | 无 | 250~350 | P1 |
+| 7 | [T11-C1.md](./T11-C1.md) | 人工编排覆盖 `ai-daily edit` | 3 | 无 | 350~500 | P1 |
+| 8 | [T11-C2.md](./T11-C2.md) | 发布前复核队列 `ai-daily review` | 3 | T11-C1 | 250~350 | P2 |
+| 9 | [T11-A3.md](./T11-A3.md) | 漏报补跑 + 成功摘要推送 `ai-daily catchup` | 3 | T11-A1 | 300~400 | P1 |
+| 10 | [T11-D1.md](./T11-D1.md) | 3 分钟简报版 `ai-daily brief` | 4 | 无 | 200~300 | P2 |
+| 11 | [T11-D2.md](./T11-D2.md) | 公司库管理 `ai-daily companies` | 4 | T11-B1 | 200~300 | P2 |
+| 12 | [T11-D3.md](./T11-D3.md) | 数据生命周期治理 `prune/archive/disk` | 4 | 无 | 200~300 | P2 |
+
+> 测试解释器固定为 `/opt/homebrew/bin/python3.12`（已确认 pytest 9.1.1 与全量依赖）。
+
 ## 快速使用
 
 ### 单条任务(推荐起点)

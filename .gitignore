@@ -12,6 +12,10 @@ logs/
 .preview/
 .workbuddy/
 
+# codex 长任务运行态（保留 runner.py，忽略状态与日志）
+runs/codex/state.json
+runs/codex/*/
+
 # 根目录一次性研究产出
 /*深度调研_*.html
 /*研究报告_*.md
