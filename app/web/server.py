@@ -38,6 +38,7 @@ from app.web.readview import (
     render_company_timeline,
     render_item_detail,
     render_reading_view,
+    render_weekly_dashboard,
 )
 
 
@@ -110,7 +111,7 @@ mark{background:#faf089;padding:0 2px;border-radius:2px}
 
 
 def _layout(title: str, body: str) -> str:
-    nav = ('<nav><a href="/">日报</a><a href="/search">🔍 搜索</a><a href="/insights">📈 洞察</a>'
+    nav = ('<nav><a href="/">日报</a><a href="/search">🔍 搜索</a><a href="/insights">📈 洞察</a><a href="/weekly">📅 周报</a>'
            '<a href="/my">⭐ 我的订阅</a><a href="/health">运行健康</a>'
            '<a href="/config">配置</a><a href="/feed.xml">RSS</a></nav>')
     searchbox = (
@@ -176,6 +177,8 @@ class WebApp:
                 return self._page_company(unquote(route[len("/company/"):]))
             if method == "GET" and route == "/archive":
                 return self._page_archive()
+            if method == "GET" and route == "/weekly":
+                return self._page_weekly(parsed.query)
             if method == "GET" and route.startswith("/read/"):
                 return self._page_read(unquote(route[len("/read/"):]))
             if method == "GET" and route.startswith("/report/"):
@@ -449,6 +452,41 @@ class WebApp:
             b.append("</table></div>")
         return Response.html(_layout("历史归档", "".join(b)))
 
+    # ── 周报在线页 ─────────────────────────────────
+    def _page_weekly(self, querystring: str = "") -> Response:
+        from app.report.weekly import aggregate_weekly, load_week_reports, week_range
+        qs = parse_qs(querystring)
+        anchor_date = qs.get("date", [None])[0] or self.store.latest_or_today().date if self.store.latest_or_today() else None
+        if anchor_date is None:
+            return Response.html(_layout("周报", "<div class='card'><h2>📅 周报</h2><p>暂无日报数据。</p></div>"))
+        reports, mon, sun = load_week_reports(self.store, anchor_date)
+        # 周选择：上一/下一周
+        from datetime import date as _date, timedelta as _td
+        ad = _date.fromisoformat(mon)
+        prev_mon = (ad - _td(days=7)).isoformat()
+        next_mon = (ad + _td(days=7)).isoformat()
+        pager = ('<div class="pager">'
+                 f'<a class="btn" href="/weekly?date={prev_mon}">← 上一周</a>'
+                 f'<a class="btn" href="/weekly?date={next_mon}">下一周 →</a>'
+                 f'<a class="btn" href="/archive">🗂 归档</a></div>')
+        if not reports:
+            body = (f"<div class='card'>{pager}<h2>📅 周报 {mon} ~ {sun}</h2>"
+                    "<p class='muted'>该周区间内无日报数据，试试切换周。</p></div>")
+            return Response.html(_layout("周报", body))
+        agg = aggregate_weekly(reports, mon, sun)
+        body = f"<div class='card'>{pager}</div>" + render_weekly_dashboard(agg)
+        # 已生成的离线周报产物
+        wdir = self.base_dir / "data" / "reports" / "weekly" / mon
+        if wdir.exists():
+            files = sorted(wdir.glob("*"))
+            if files:
+                links = " ".join(
+                    f'<a class="btn" href="/file/weekly/{quote(mon)}/{quote(f.name)}">📄 {html.escape(f.suffix.lstrip(".").upper())}</a>'
+                    for f in files if f.suffix in (".html", ".pdf", ".md"))
+                if links:
+                    body += f'<div class="card"><h2>📦 离线周报产物</h2>{links}</div>'
+        return Response.html(_layout(f"周报 {mon}", body))
+
     # ── T14-C 条目下钻 ─────────────────────────────
     def _find_item(self, date: str, item_id: str):
         raw = self.store.load_raw(date)
@@ -711,10 +749,10 @@ class WebApp:
         parts = [p for p in unquote(rel).split("/") if p and p != ".."]
         if len(parts) < 2:
             return Response.text("bad path", status=400)
-        date, fname = parts[0], parts[-1]
-        target = (self.store.root / date / fname).resolve()
+        # 常规：/file/<date>/<fname>；周报：/file/weekly/<mon>/<fname>（忽略 ?dir= 查询串）
+        target = (self.store.root / Path(*parts)).resolve()
         root = self.store.root.resolve()
-        if not str(target).startswith(str(root)) or not target.exists():
+        if not str(target).startswith(str(root)) or not target.exists() or not target.is_file():
             return Response.text("not found", status=404)
         ctype = {
             ".pdf": "application/pdf", ".html": "text/html; charset=utf-8",

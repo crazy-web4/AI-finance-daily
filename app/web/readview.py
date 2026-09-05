@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import html
 import re
+from urllib.parse import quote
 from typing import Any, Iterable
 
 # 栏目主题色（左侧色条 / 标签）
@@ -227,3 +228,43 @@ def render_reading_view(raw: dict, date: str, *, banner: str = "", query: str = 
         f'｜ 字数 {raw.get("total_word_count", "-")} ｜ report_id {esc(raw.get("report_id", ""))}</p>'
     )
     return meta + "".join(b)
+
+
+def render_weekly_dashboard(agg: dict) -> str:
+    """看板风格周报片段（聚合 dict 来自 app.report.weekly.aggregate_weekly）。
+
+    与离线周报 HTML 的区别：条目标题链接到当日 /read 页，公司标签链接到 /company。
+    """
+    def item_line(it: dict, with_kd: bool = False) -> str:
+        kd = ""
+        if with_kd and it.get("key_data"):
+            kd = ' <span class="muted">（' + esc(" ｜ ".join(f"{k.get('label')}:{k.get('value')}" for k in it["key_data"])) + "）</span>"
+        return (f'<li><span class="muted">[{esc(it["date"])}]</span> '
+                f'<a href="/read/{esc(it["date"])}">{esc(it["title"])}</a>{kd}</li>')
+
+    b = ['<div class="card"><h2>📅 AI 行业周报</h2>']
+    b.append(f'<p class="muted">{esc(agg["week_start"])} ~ {esc(agg["week_end"])} ｜ '
+             f'覆盖 {agg["report_count"]} 个日报日 ｜ 合计 {agg["total_items"]} 条事件</p></div>')
+
+    if agg.get("top_companies"):
+        b.append('<div class="card"><h2>🏢 本周公司活跃度 TOP 10</h2><p>')
+        for c in agg["top_companies"]:
+            b.append(f'<a class="tag" href="/company/{quote(c["company"])}">'
+                     f'{esc(c["company"])} · {c["mentions"]}次/{c["days"]}天</a> ')
+        b.append("</p></div>")
+
+    sections = [
+        ("💰 本周 TOP 融资", agg.get("funding", []), True),
+        ("🚀 模型发布与技术节奏", agg.get("model_releases", []), False),
+        ("⚖️ 政策与监管大事记", agg.get("policy", []), False),
+        ("🧪 研究突破", agg.get("research", []), False),
+        ("🗓️ 本周头条时间轴", agg.get("timeline", []), False),
+    ]
+    for title, items, with_kd in sections:
+        if not items:
+            continue
+        b.append(f'<div class="card"><h2>{esc(title)}</h2><ul>')
+        for it in items:
+            b.append(item_line(it, with_kd=with_kd))
+        b.append("</ul></div>")
+    return "".join(b)

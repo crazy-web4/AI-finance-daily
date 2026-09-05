@@ -171,7 +171,7 @@ class TestWebT14(unittest.TestCase):
         self.assertIn("历史归档", body)
         self.assertIn("2026-08", body)
         self.assertIn("2026-09", body)
-        self.assertIn("/read/2026-09-01", body)
+        self.assertIn("/read/2026-09-02", body)
 
     def test_read_pager_and_toc(self):
         r = self.app.handle("GET", "/read/2026-09-01")
@@ -207,9 +207,45 @@ class TestWebT14(unittest.TestCase):
         self.assertEqual(r.status, 200)
         body = r.body.decode()
         self.assertIn("OpenAI", body)
-        self.assertIn("/read/2026-09-01", body)
+        self.assertIn("/read/2026-09-02", body)
 
     def test_insights_company_links(self):
         r = self.app.handle("GET", "/insights")
         self.assertEqual(r.status, 200)
         self.assertIn("/company/", r.body.decode())
+
+
+class TestWebWeekly(unittest.TestCase):
+    """第14批续：周报在线页 + 周报离线产物下载。"""
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        make_store(self.tmp, ("2026-08-31", "2026-09-01", "2026-09-02"))
+        # 造一个离线周报产物
+        wdir = self.tmp / "data" / "reports" / "weekly" / "2026-08-31"
+        wdir.mkdir(parents=True, exist_ok=True)
+        (wdir / "周报_2026-08-31_to_2026-09-06.html").write_text("<html>weekly</html>", encoding="utf-8")
+        self.app = WebApp(reports_dir=self.tmp / "data" / "reports", base_dir=self.tmp)
+
+    def test_weekly_page(self):
+        r = self.app.handle("GET", "/weekly")
+        self.assertEqual(r.status, 200)
+        body = r.body.decode()
+        self.assertIn("AI 行业周报", body)
+        self.assertIn("上一周", body)
+        self.assertIn("/read/2026-09-02", body)
+        self.assertIn("/company/", body)
+
+    def test_weekly_empty_week(self):
+        r = self.app.handle("GET", "/weekly?date=2026-01-05")
+        self.assertEqual(r.status, 200)
+        self.assertIn("无日报数据", r.body.decode())
+
+    def test_weekly_offline_file(self):
+        r = self.app.handle("GET", "/file/weekly/2026-08-31/周报_2026-08-31_to_2026-09-06.html")
+        self.assertEqual(r.status, 200)
+        self.assertIn("text/html", r.content_type)
+
+    def test_weekly_nav_link(self):
+        r = self.app.handle("GET", "/")
+        self.assertIn("/weekly", r.body.decode())
