@@ -1,0 +1,14 @@
+# 异常告警规则（建议 #10 · T-D10）
+# python main.py watch [--dry-run] 读取本文件
+
+company_spike:
+  factor: 4.0          # 单日事件数 ≥ 周均 × factor 视为突发热点
+  window_days: 7       # 基线窗口（天）
+  min_count: 3         # 当日至少多少条才触发，避免小样本噪声
+
+topic_drop:
+  consecutive_days: 3  # 某栏目连续多少天 0 条触发
+
+collection_drop:
+  ratio: 0.5           # 今日采集量 < 昨日 × ratio 触发
+  min_baseline: 20     # 基线（昨日）至少多少篇才比较，避免小样本

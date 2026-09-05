@@ -42,9 +42,11 @@ class LLMClient:
         if not self.base_url:
             raise ValueError("未配置 Base URL，请设置 ARK_BASE_URL 或 OPENAI_BASE_URL")
 
+        # 第四轮 T29: 显式 timeout，避免经代理的挂起请求空耗数十分钟
         self._client = OpenAI(
             api_key=self.api_key,
             base_url=self.base_url,
+            timeout=120.0,
         )
         # 架构评审 #16: 调用统计，供运行报告使用
         self.stats = {"calls": 0, "completion_chars": 0}

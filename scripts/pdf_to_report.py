@@ -664,6 +664,7 @@ async def main():
 
     # 4. 配置渲染器
     config = RenderConfig(
+        watermark_text=args.watermark,
         report_title=args.report_title,
         company=args.company,
         wechat_id=args.wechat_id,

@@ -62,21 +62,21 @@ body {
 }
 
 /* 水印 */
-/* 水印（::before 方式，屏幕显示） */
+/* 水印（::before 方式，屏幕显示 + PDF 打印） */
 body::before {
   content: attr(data-watermark);
   position: fixed;
   top: 50%;
   left: 50%;
-  transform: translate(-50%, -50%) rotate(-45deg);
+  transform: translate(-50%, -50%) rotate(-35deg);
   font-family: 'Noto Serif SC', serif;
-  font-size: 100pt;
+  font-size: 26pt;
   font-weight: 700;
-  color: rgba(180, 150, 120, 0.12);
+  color: rgba(150, 120, 90, 0.20);
   white-space: nowrap;
   pointer-events: none;
   z-index: 0;
-  letter-spacing: 0.2em;
+  letter-spacing: 0.05em;
 }
 
 /* 水印 div（屏幕显示备用，主要靠 body background 实现每页水印） */
@@ -249,8 +249,8 @@ body::before {
 
 /* 新闻条目 */
 .news-article {
-  margin-bottom: 2mm;
-  padding-bottom: 1mm;
+  margin-bottom: 6mm;
+  padding-bottom: 3mm;
   border-bottom: 1px dashed #e0e0e0;
 }
 
@@ -262,11 +262,11 @@ body::before {
 }
 
 .article-title {
-  font-size: 11pt;
+  font-size: 12.5pt;
   font-weight: 700;
   color: #1a5276;
   line-height: 1.5;
-  margin-bottom: 0.5mm;
+  margin-bottom: 1.5mm;
   display: flex;
   align-items: baseline;
 }
@@ -279,8 +279,8 @@ body::before {
 }
 
 .article-body {
-  font-size: 9.5pt;
-  line-height: 1.35;
+  font-size: 10.5pt;
+  line-height: 1.7;
   color: #333;
   text-align: justify;
   margin-bottom: 0.5mm;
@@ -289,7 +289,7 @@ body::before {
 
 /* 第二轮 R6: 正文分段渲染，段落间距 */
 .article-body p {
-  margin: 0 0 2mm 0;
+  margin: 0 0 2.5mm 0;
   text-indent: 2em;
 }
 .article-body p:last-child {
@@ -305,9 +305,9 @@ body::before {
 }
 
 .article-analysis {
-  font-size: 9pt;
+  font-size: 9.5pt;
   color: #555;
-  line-height: 1.5;
+  line-height: 1.6;
   padding: 2mm 3mm;
   background: #fef9e7;
   border-left: 2px solid #f39c12;
@@ -316,9 +316,9 @@ body::before {
 
 /* 来源引用 */
 .article-sources {
-  font-size: 7.5pt;
+  font-size: 8.5pt;
   color: #888;
-  line-height: 1.3;
+  line-height: 1.5;
 }
 
 .sources-label {
@@ -329,9 +329,8 @@ body::before {
 }
 
 .source-item {
-  display: flex;
-  align-items: baseline;
-  padding: 0.5mm 0;
+  display: block;
+  padding: 0.8mm 0;
 }
 
 .source-num {
@@ -351,9 +350,10 @@ body::before {
   color: #aaa;
   font-family: monospace;
   font-size: 8pt;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  display: block;
+  margin-left: 5mm;
+  white-space: normal;
+  word-break: break-all;
 }
 
 /* 页脚 */

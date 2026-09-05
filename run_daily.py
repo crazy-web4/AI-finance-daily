@@ -15,6 +15,7 @@ import json
 import os
 import sys
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -28,7 +29,7 @@ from app.pipeline.collector import NewsCollector, RawNewsArticle
 from app.pipeline.cluster import cluster_articles, build_article_map
 from app.pipeline.backfill import backfill_empty_categories
 from app.pipeline.history import filter_seen_events, load_recent_event_titles
-from app.utils.timeutil import report_today
+from app.utils.timeutil import report_now, report_today
 from app.agents.base import LLMClient
 from app.agents.pipeline import AnalystAgent, ChiefEditorAgent
 from app.agents.factcheck import FactCheckerAgent, ground_key_data
@@ -262,9 +263,40 @@ async def do_agent_analysis(events, article_map, max_events=6, concurrency=None,
         print("  ❌ 没有有效的分析结果", flush=True)
         sys.exit(1)
 
+    # 第四轮 T30: 事件时间门——Analyst 已输出事件时间 published_at，
+    # 此处确定性复查：明显超过 7 天的旧事件直接剔除（如「2025 Cloud Next」类旧闻）；
+    # published_at 为空不做误杀，交由采集层规则。
+    from datetime import timedelta
+    gated: list[tuple] = []
+    stale_dropped: list[str] = []
+    for event, analysis in analyzed:
+        pa = analysis.get("published_at")
+        dt = None
+        if isinstance(pa, str) and pa.strip():
+            try:
+                dt = datetime.fromisoformat(pa.strip().replace("Z", "+00:00"))
+            except ValueError:
+                dt = None
+        if dt is not None:
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            if report_now() - dt > timedelta(days=7):
+                stale_dropped.append(f"{analysis.get('title', event.canonical_title)[:30]} ← {pa[:10]}")
+                continue
+        gated.append((event, analysis))
+    if stale_dropped:
+        print(f"\n  ⏳ 时效门: 剔除 {len(stale_dropped)} 个超过7天的旧事件", flush=True)
+        for t in stale_dropped:
+            print(f"     - {t}", flush=True)
+    analyzed = gated
+    if not analyzed:
+        print("  ❌ 时效门后无有效分析结果", flush=True)
+        sys.exit(1)
+
     # 事实核查（架构评审 #6）
     checker = FactCheckerAgent(llm=llm)
     quality_flags: list[str] = []
+    quality_flags.extend(f"时效门剔除: {t}" for t in stale_dropped)
     verify_jobs: list[tuple] = []
     for event, analysis in analyzed:
         texts: list[str] = []
@@ -340,21 +372,96 @@ async def do_agent_analysis(events, article_map, max_events=6, concurrency=None,
 
 
 async def do_pdf(report):
-    """步骤4：PDF 渲染。"""
+    """步骤4：PDF 渲染（优雅降级：playwright 缺失/失败时退到 HTML+Markdown）。"""
     print("\n" + "=" * 60)
     print("  STEP 4 / 4  PDF 渲染")
     print("=" * 60, flush=True)
 
+    from app.utils.fallback import playwright_available
     renderer = PDFRenderer()
 
     html_path = renderer.save_html(report)
     print(f"  📄 HTML: {html_path}", flush=True)
 
-    pdf_path = await renderer.render_pdf(report)
+    if not playwright_available():
+        print("  ⚠️  playwright/chromium 不可用 → 降级输出 HTML + Markdown", flush=True)
+        print("     安装后可出 PDF: pip install playwright && playwright install chromium", flush=True)
+        try:
+            from app.exporter import run_all_exporters
+            run_all_exporters(report, Path(f"data/reports/{report.report_date}"), enabled=("markdown",))
+        except Exception:
+            pass
+        return None
+
+    try:
+        pdf_path = await renderer.render_pdf(report)
+    except Exception as e:  # noqa: BLE001 - PDF 失败不致命，HTML/MD 兜底
+        print(f"  ⚠️  PDF 渲染失败 → 降级 HTML + Markdown: {type(e).__name__}: {e}", flush=True)
+        try:
+            from app.exporter import run_all_exporters
+            run_all_exporters(report, Path(f"data/reports/{report.report_date}"), enabled=("markdown",))
+        except Exception:
+            pass
+        return None
     size_kb = pdf_path.stat().st_size / 1024
     print(f"  📕 PDF:  {pdf_path}", flush=True)
     print(f"     大小: {size_kb:.1f} KB", flush=True)
     return pdf_path
+
+
+async def do_personalized(report, today: str):
+    """第 10 批 T-D11: 按订阅生成个性化定制版（best-effort，不阻断主链路）。"""
+    try:
+        from app.personalization.store import SubscriptionStore
+        from app.personalization.filter import filter_report
+        store = SubscriptionStore("data/subscriptions")
+        subs = [s for s in store.list_all() if s.companies or s.categories]
+        if not subs:
+            return
+        renderer = PDFRenderer()
+        for sub in subs:
+            preport = filter_report(report, sub.companies, sub.categories, sub.name)
+            out = Path(f"data/reports/{today}")
+            (out / f"daily_{today}_{sub.name}_personalized.json").write_text(
+                preport.model_dump_json(indent=2), encoding="utf-8")
+            try:
+                renderer.save_html(preport, filename=f"report_{today}_{sub.name}_personalized.html")
+            except Exception:
+                pass
+            # 注：个性化 PDF 受共用文件名模板限制不单独出（会与主 PDF 撞名），
+            # 定制版以独立命名的 JSON + HTML 交付，主 PDF 仍为全量版。
+            print(f"  🎯 个性化版[{sub.name}]: {preport.total_items} 条（JSON+HTML）", flush=True)
+    except Exception as e:  # noqa: BLE001
+        print(f"  ⚠️  个性化生成跳过: {type(e).__name__}: {e}", flush=True)
+
+
+def post_report_steps(report, today: str, rr):
+    """第 10 批：多格式导出 + SQLite 入库（best-effort，失败只标记不阻断）。"""
+    out_dir = Path(f"data/reports/{today}")
+    try:
+        from app.exporter import run_all_exporters
+        res = run_all_exporters(report, out_dir)
+        ok_fmts = [k for k, v in res.items() if v["ok"]]
+        for k, v in res.items():
+            if not v["ok"]:
+                rr.flag(f"导出 {k} 失败: {v['error']}")
+        rr.set("exporters", ok_fmts)
+        print(f"  📦 多格式导出: {', '.join(ok_fmts)}", flush=True)
+    except Exception as e:  # noqa: BLE001
+        rr.flag(f"多格式导出异常: {type(e).__name__}: {e}")
+
+    try:
+        from app.storage.db import DEFAULT_DB_PATH as _DB, connect, init_db, upsert_report
+        from app.storage.report_store import ReportStore
+        conn = connect(_DB)
+        init_db(conn)
+        art = ReportStore("data/reports").get(today)
+        n = upsert_report(conn, report, json_path=art.daily_json, pdf_path=art.primary_pdf())
+        conn.close()
+        rr.set("indexed_items", n)
+        print(f"  🗃  已入情报库: {n} 条 → {_DB}", flush=True)
+    except Exception as e:  # noqa: BLE001
+        rr.flag(f"情报库索引异常: {type(e).__name__}: {e}")
 
 
 def init_system():
@@ -509,16 +616,31 @@ async def main():
 
         if args.no_pdf:
             print("\n⏭️  跳过 PDF", flush=True)
+            # 第 10 批：个性化定制版
+            await do_personalized(report, today)
+            # 第 10 批：多格式导出 + SQLite 入库（即使不出 PDF 也执行）
+            post_report_steps(report, today, rr)
             return
 
         # Step 4: PDF
         pdf_path = await do_pdf(report)
         perf_monitor.record_timing("pdf", rr.stage("pdf"))
 
+        # 第 10 批 T-D12: PDF 降级不视为失败（HTML/Markdown 已兜底）
+        if pdf_path is None:
+            rr.flag("PDF 未生成（playwright 不可用或渲染失败），已降级为 HTML + Markdown")
+
+        # 个性化定制版 + 多格式导出 + SQLite 入库
+        await do_personalized(report, today)
+        post_report_steps(report, today, rr)
+
         elapsed = time.time() - start_time
         print("\n" + "=" * 60, flush=True)
         print(f"  ✅ 全部完成！耗时 {elapsed:.1f} 秒", flush=True)
-        print(f"  📕 {pdf_path}", flush=True)
+        if pdf_path:
+            print(f"  📕 {pdf_path}", flush=True)
+        else:
+            print("  📄 HTML/Markdown 已生成（PDF 降级）", flush=True)
         print("=" * 60, flush=True)
     except SystemExit:
         ok = False

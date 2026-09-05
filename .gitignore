@@ -9,3 +9,12 @@ __pycache__/
 .DS_Store
 logs/
 .firecrawl/
+.preview/
+.workbuddy/
+
+# 根目录一次性研究产出
+/*深度调研_*.html
+/*研究报告_*.md
+/*研究报告_*.html
+/*事实核查备忘录_*.md
+/*财报日历_*.md
