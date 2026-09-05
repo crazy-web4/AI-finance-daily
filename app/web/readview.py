@@ -85,12 +85,13 @@ def _render_sources(sources: Iterable[dict]) -> str:
     return '<div class="src">' + " ".join(links) + "</div>"
 
 
-def render_item(item: dict, query: str = "") -> str:
+def render_item(item: dict, query: str = "", detail_prefix: str = "") -> str:
     title = highlight(item.get("title"), query)
     rank = item.get("rank", "·")
     cat = item.get("category", "")
     accent = SECTION_ACCENT.get(cat, "#4a5568")
-    b = [f'<article class="news" style="border-left-color:{accent}">']
+    item_id = item.get("item_id") or f"item-{rank}"
+    b = [f'<article class="news" id="{esc(item_id)}" style="border-left-color:{accent}">']
     b.append(f'<h4><span class="rank">{esc(rank)}</span> {title}</h4>')
     b.append(_render_key_data(item.get("key_data")))
     for para in _paragraphs(item.get("details") or ""):
@@ -98,10 +99,88 @@ def render_item(item: dict, query: str = "") -> str:
     if item.get("analysis"):
         b.append(f'<aside class="ana"><strong>✍️ 编辑点评</strong>：{highlight(item["analysis"], query)}</aside>')
     b.append(_render_sources(item.get("sources")))
+    tools = []
+    if detail_prefix:
+        tools.append(f'<a class="detail-link" href="{esc(detail_prefix)}{esc(item_id)}">🔎 深度阅读</a>')
     wc = item.get("word_count")
     if wc:
-        b.append(f'<div class="muted wc">约 {esc(wc)} 字</div>')
+        tools.append(f'<span class="muted wc">约 {esc(wc)} 字</span>')
+    if tools:
+        b.append('<div class="item-tools">' + " ".join(tools) + "</div>")
     b.append("</article>")
+    return "".join(b)
+
+
+def render_toc(sections: list[dict], date: str) -> str:
+    """本期目录：栏目锚点跳转。"""
+    items = []
+    idx = 0
+    for sec in sections:
+        sitems = sec.get("items") or []
+        if not sitems:
+            continue
+        sec_anchor = f"sec-{idx}"
+        items.append(
+            f'<li><a href="#{sec_anchor}">{esc(sec.get("section_name", ""))}'
+            f'<span class="muted">（{len(sitems)}）</span></a></li>'
+        )
+        idx += 1
+    if not items:
+        return ""
+    return ('<div class="card toc"><h2>🧭 本期目录</h2><ul class="toc-list">'
+            + "".join(items) + "</ul></div>")
+
+
+def render_item_detail(item: dict, date: str, related: list[dict] | None = None) -> str:
+    """单条深度阅读页片段：完整内容 + 全部来源 + 跨期相关报道。"""
+    b = ['<div class="card read-card">']
+    b.append(f'<p class="muted">📅 {esc(date)}</p>')
+    b.append(f'<h2 class="detail-title">{esc(item.get("title", ""))}</h2>')
+    b.append(_render_key_data(item.get("key_data")))
+    for para in _paragraphs(item.get("details") or ""):
+        b.append(f"<p>{esc(para)}</p>")
+    if item.get("analysis"):
+        b.append(f'<aside class="ana"><strong>✍️ 编辑点评</strong>：{esc(item["analysis"])}</aside>')
+    b.append("</div>")
+    # 全部来源
+    srcs = [s for s in (item.get("sources") or []) if isinstance(s, dict)]
+    if srcs:
+        b.append('<div class="card read-card"><h2>🔗 原文来源</h2><ul class="src-list">')
+        for s in srcs:
+            name = esc(s.get("name") or s.get("url") or "来源")
+            url = s.get("url")
+            if url:
+                b.append(f'<li><a href="{esc(url)}" target="_blank" rel="noopener">{name}</a> <span class="muted">{esc(url)}</span></li>')
+            else:
+                b.append(f"<li>{name}</li>")
+        b.append("</ul></div>")
+    # 跨期相关
+    rel = [r for r in (related or []) if r.get("date") != date or r.get("title") != item.get("title")]
+    if rel:
+        b.append('<div class="card read-card"><h2>🔁 相关报道（跨期）</h2><ul>')
+        for r in rel[:12]:
+            comp = "、".join((r.get("companies") or [])[:3])
+            comp_s = f' <span class="muted">[{esc(comp)}]</span>' if comp else ""
+            b.append(
+                f'<li>[{esc(r["date"])}] {esc(r.get("section_name") or "")} · '
+                f'<a href="/read/{esc(r["date"])}">{esc(r.get("title", ""))}</a>{comp_s}</li>')
+        b.append("</ul></div>")
+    return "".join(b)
+
+
+def render_company_timeline(name: str, rows: list[dict]) -> str:
+    """公司时间线片段。"""
+    b = [f'<div class="card"><h2>🏢 {esc(name)} · 全部报道（{len(rows)}）</h2>']
+    if not rows:
+        b.append('<p class="muted">没有找到相关报道。</p></div>')
+        return "".join(b)
+    b.append('<table><tr><th>日期</th><th>栏目</th><th>重要度</th><th>标题</th></tr>')
+    for r in rows:
+        b.append(
+            f'<tr><td><a href="/read/{esc(r["date"])}">{esc(r["date"])}</a></td>'
+            f'<td>{esc(r.get("section_name") or "")}</td><td>{r.get("importance", "-")}</td>'
+            f'<td><a href="/read/{esc(r["date"])}">{esc(r.get("title", ""))}</a></td></tr>')
+    b.append("</table></div>")
     return "".join(b)
 
 
@@ -116,25 +195,28 @@ def render_reading_view(raw: dict, date: str, *, banner: str = "", query: str = 
 
     flags = [f for f in (raw.get("quality_flags") or []) if f]
     if flags:
-        items = "".join(f"<li>{esc(f)}</li>" for f in flags)
-        b.append(f'<details class="card flags"><summary>🚩 质量标记（{len(flags)}）</summary><ul>{items}</ul></details>')
+        fl = "".join(f"<li>{esc(f)}</li>" for f in flags)
+        b.append(f'<details class="card flags"><summary>🚩 质量标记（{len(flags)}）</summary><ul>{fl}</ul></details>')
 
+    sections = raw.get("sections", [])
+    b.append(render_toc(sections, date))
+    detail_prefix = f"/item/{date}/"
     any_item = False
-    for sec in raw.get("sections", []):
-        items = sec.get("items") or []
-        if not items:
+    for idx, sec in enumerate(sections):
+        sitems = sec.get("items") or []
+        if not sitems:
             continue
         any_item = True
         sid = sec.get("section_id") or ""
         accent = SECTION_ACCENT.get(sid, "#4a5568")
-        b.append('<div class="card read-card">')
+        b.append(f'<div class="card read-card" id="sec-{idx}">')
         b.append(
             f'<h2 class="sec-title" style="border-left-color:{accent}">'
             f"{esc(sec.get('section_name', ''))} "
-            f'<span class="muted">（{len(items)}）</span></h2>'
+            f'<span class="muted">（{len(sitems)}）</span></h2>'
         )
-        for it in items:
-            b.append(render_item(it, query=query))
+        for it in sitems:
+            b.append(render_item(it, query=query, detail_prefix=detail_prefix))
         b.append("</div>")
 
     if not any_item:

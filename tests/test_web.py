@@ -154,3 +154,62 @@ class TestWebT13(unittest.TestCase):
         r = self.app.handle("POST", "/trigger?mode=full", body=b"")
         self.assertEqual(r.status, 200)
         self.assertEqual(json.loads(r.body)["mode"], "full")
+
+
+class TestWebT14(unittest.TestCase):
+    """第14批：归档 / 阅读导航 / 条目下钻 / 公司时间线。"""
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        make_store(self.tmp, ("2026-08-31", "2026-09-01", "2026-09-02"))
+        self.app = WebApp(reports_dir=self.tmp / "data" / "reports", base_dir=self.tmp)
+
+    def test_archive_lists_all_months(self):
+        r = self.app.handle("GET", "/archive")
+        self.assertEqual(r.status, 200)
+        body = r.body.decode()
+        self.assertIn("历史归档", body)
+        self.assertIn("2026-08", body)
+        self.assertIn("2026-09", body)
+        self.assertIn("/read/2026-09-01", body)
+
+    def test_read_pager_and_toc(self):
+        r = self.app.handle("GET", "/read/2026-09-01")
+        body = r.body.decode()
+        self.assertIn("本期目录", body)            # TOC
+        self.assertIn("上一期", body)             # pager
+        self.assertIn("下一期", body)
+        self.assertIn("/item/2026-09-01/", body)  # detail link
+        self.assertIn('id="item_001"', body)      # anchor
+
+    def test_read_first_no_prev(self):
+        r = self.app.handle("GET", "/read/2026-08-31")
+        self.assertIn("无上一期", r.body.decode())
+
+    def test_item_detail(self):
+        r = self.app.handle("GET", "/item/2026-09-01/item_001")
+        self.assertEqual(r.status, 200)
+        body = r.body.decode()
+        self.assertIn("原文来源", body)
+        self.assertIn("reuters.com", body)
+        self.assertIn("返回 2026-09-01 日报", body)
+
+    def test_item_detail_missing_404(self):
+        r = self.app.handle("GET", "/item/2026-09-01/item_999")
+        self.assertEqual(r.status, 404)
+
+    def test_item_route_bad_format(self):
+        r = self.app.handle("GET", "/item/2026-09-01")
+        self.assertEqual(r.status, 404)
+
+    def test_company_timeline(self):
+        r = self.app.handle("GET", "/company/OpenAI")
+        self.assertEqual(r.status, 200)
+        body = r.body.decode()
+        self.assertIn("OpenAI", body)
+        self.assertIn("/read/2026-09-01", body)
+
+    def test_insights_company_links(self):
+        r = self.app.handle("GET", "/insights")
+        self.assertEqual(r.status, 200)
+        self.assertIn("/company/", r.body.decode())

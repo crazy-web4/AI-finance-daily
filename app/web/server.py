@@ -34,7 +34,11 @@ from urllib.parse import parse_qs, quote, unquote, urlparse
 from app.storage.report_store import ReportArtifacts, ReportStore
 from app.utils.timeutil import report_now
 from app.web.feed import build_atom, build_rss
-from app.web.readview import render_reading_view
+from app.web.readview import (
+    render_company_timeline,
+    render_item_detail,
+    render_reading_view,
+)
 
 
 @dataclass
@@ -97,6 +101,11 @@ mark{background:#faf089;padding:0 2px;border-radius:2px}
 .heat .col{flex:1;background:#63b3ed;border-radius:3px 3px 0 0;min-height:2px;position:relative}
 .sub-form input{padding:8px 10px;border:1px solid #cbd5e0;border-radius:6px;font-size:14px;margin:4px 6px 4px 0}
 .tag{display:inline-block;background:#edf2f7;border-radius:12px;padding:2px 10px;font-size:12px;margin:2px}
+
+.pager{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:10px}.btn.disabled{background:#a0aec0;cursor:default;pointer-events:none}
+.toc-list{columns:2;list-style:none;padding:0;margin:0}.toc-list li{margin:4px 0;font-size:14px;break-inside:avoid}
+.item-tools{margin-top:6px;display:flex;gap:14px;align-items:center}.detail-link{font-size:13px;text-decoration:none;font-weight:600}
+.detail-title{font-size:20px;color:#1a202c;line-height:1.4}.src-list{list-style:none;padding:0;margin:0}.src-list li{margin:6px 0;font-size:13px;word-break:break-all}
 """
 
 
@@ -161,6 +170,12 @@ class WebApp:
                 return Response.text(build_rss(self.store), ctype="application/rss+xml; charset=utf-8")
             if method == "GET" and route == "/atom.xml":
                 return Response.text(build_atom(self.store), ctype="application/atom+xml; charset=utf-8")
+            if method == "GET" and route.startswith("/item/"):
+                return self._page_item(route[len("/item/"):])
+            if method == "GET" and route.startswith("/company/"):
+                return self._page_company(unquote(route[len("/company/"):]))
+            if method == "GET" and route == "/archive":
+                return self._page_archive()
             if method == "GET" and route.startswith("/read/"):
                 return self._page_read(unquote(route[len("/read/"):]))
             if method == "GET" and route.startswith("/report/"):
@@ -305,7 +320,8 @@ class WebApp:
                 f"<td>{'📕' if art.has_pdf else '—'} {'📄' if art.htmls else ''}</td></tr>"
             )
         body = "".join(cards) + (
-            '<div class="card"><h2>🗂 近期日报</h2><table><tr><th>日期</th><th>条目</th><th>耗时</th><th>状态</th><th>产物</th></tr>'
+            '<div class="card"><h2>🗂 近期日报　<a class="muted" style="font-size:13px;font-weight:400" href="/archive">查看全部归档 →</a></h2>'
+            '<table><tr><th>日期</th><th>条目</th><th>耗时</th><th>状态</th><th>产物</th></tr>'
             + "".join(rows) + "</table></div>"
         )
         return Response.html(_layout("首页", body))
@@ -385,15 +401,110 @@ class WebApp:
                 _layout("无日报", f"<div class='card'><h2>{html.escape(date)}</h2><p>该日期无日报数据。</p></div>"),
                 status=404)
         raw = self.store.load_raw(date) or {}
-        links = [f'<a class="btn" href="/">← 首页</a> <a class="btn" href="/read/{date}">📖 在线阅读</a>']
+        dates = self.store.report_dates()
+        prev_d = next((d for d in dates if d < date), None)
+        next_d = next((d for d in reversed(dates) if d > date), None)
+        nav = ['<div class="pager">']
+        nav.append(f'<a class="btn" href="/archive">🗂 归档</a>')
+        nav.append(f'<a class="btn" href="/read/{prev_d}">← 上一期 {prev_d}</a>' if prev_d
+                   else '<span class="btn disabled">← 无上一期</span>')
+        nav.append(f'<a class="btn" href="/read/{next_d}">下一期 {next_d} →</a>' if next_d
+                   else '<span class="btn disabled">已是最新 →</span>')
+        nav.append("</div>")
+        links = [f'<a class="btn" href="/">← 首页</a>']
         if art.primary_pdf():
             links.append(f'<a class="btn" href="/file/{date}/{quote(art.primary_pdf().name)}">📕 PDF</a>')
         if art.htmls:
             links.append(f'<a class="btn" href="/file/{date}/{quote(art.htmls[0].name)}">📄 原始HTML</a>')
         links.append(f'<a class="btn" href="/my?date={date}">⭐ 订阅版</a>')
-        head = f"<div class='card'><p>{' '.join(links)}</p></div>"
+        head = f"<div class='card'>{''.join(nav)}<p>{' '.join(links)}</p></div>"
         body = head + render_reading_view(raw, date, banner=banner, query=query)
         return Response.html(_layout(f"日报 {date}", body))
+
+    # ── T14-A 历史归档 ─────────────────────────────
+    def _page_archive(self) -> Response:
+        groups: dict[str, list] = {}
+        total = 0
+        for d in reversed(self.store.report_dates()):
+            art = self.store.get(d)
+            rl = self.store.load_runlog(d) or {}
+            raw = self.store.load_raw(d) or {}
+            ok = rl.get("success")
+            groups.setdefault(d[:7], []).append({
+                "date": d, "items": raw.get("total_items", "-"),
+                "elapsed": rl.get("elapsed_sec"), "ok": ok,
+                "pdf": bool(art.primary_pdf()),
+            })
+            total += 1
+        b = [f'<div class="card"><h2>🗂 历史归档（{total} 期）</h2>']
+        b.append('<p class="muted">按月分组，点击日期进入在线阅读。</p></div>')
+        for month in sorted(groups, reverse=True):
+            b.append(f'<div class="card"><h2>{month}</h2><table><tr><th>日期</th><th>条目</th><th>耗时</th><th>状态</th><th>PDF</th></tr>')
+            for r in groups[month]:
+                badge = _badge(r["ok"] is True, "成功" if r["ok"] else ("失败" if r["ok"] is False else "无runlog"))
+                b.append(
+                    f'<tr><td><a href="/read/{r["date"]}">{r["date"]}</a></td>'
+                    f'<td>{r["items"]}</td><td>{r["elapsed"] or "-"}s</td>'
+                    f'<td>{badge}</td><td>{"📕" if r["pdf"] else "—"}</td></tr>')
+            b.append("</table></div>")
+        return Response.html(_layout("历史归档", "".join(b)))
+
+    # ── T14-C 条目下钻 ─────────────────────────────
+    def _find_item(self, date: str, item_id: str):
+        raw = self.store.load_raw(date)
+        if not raw:
+            return None, None
+        for sec in raw.get("sections", []):
+            for it in sec.get("items") or []:
+                if it.get("item_id") == item_id:
+                    return it, raw
+        return None, raw
+
+    def _page_item(self, rel: str) -> Response:
+        parts = [p for p in rel.split("/") if p]
+        if len(parts) < 2:
+            return Response.html(_layout("404", "<div class='card'><p>链接格式应为 /item/&lt;日期&gt;/&lt;条目id&gt;。</p></div>"), status=404)
+        date, item_id = parts[0], parts[1]
+        item, _ = self._find_item(date, item_id)
+        if item is None:
+            return Response.html(_layout("未找到", f"<div class='card'><h2>条目不存在</h2><p>{html.escape(date)} / {html.escape(item_id)}</p></div>"), status=404)
+        # 跨期相关：取标题首段关键词做检索
+        related = []
+        try:
+            from app.storage.query import search_conn
+            kw = (item.get("title") or "").split("，")[0][:12]
+            conn = self._open_db()
+            try:
+                related = search_conn(conn, keyword=kw, limit=12)
+            finally:
+                conn.close()
+        except Exception:  # noqa: BLE001
+            related = []
+        head = (f"<div class='card'><p><a class='btn' href='/read/{date}'>← 返回 {date} 日报</a> "
+                f"<a class='btn' href='/archive'>🗂 归档</a></p></div>")
+        body = head + render_item_detail(item, date, related=related)
+        return Response.html(_layout("深度阅读", body))
+
+    # ── T14-D 公司时间线 ───────────────────────────
+    def _page_company(self, name: str) -> Response:
+        name = name.strip()
+        if not name:
+            return Response.html(_layout("公司", "<div class='card'><p>缺少公司名。</p></div>"), status=400)
+        rows = []
+        try:
+            from app.storage.query import search_conn
+            conn = self._open_db()
+            try:
+                rows = search_conn(conn, keyword=name, limit=100)
+            finally:
+                conn.close()
+        except Exception as e:  # noqa: BLE001
+            return Response.html(_layout("公司", f"<div class='card'><p>情报库不可用：{html.escape(str(e))}</p></div>"), status=200)
+        # 公司名标签（从洞察页高频公司也可跳来）
+        head = (f"<div class='card'><p><a class='btn' href='/insights'>← 返回洞察</a> "
+                f"<a class='btn' href='/search?q={quote(name)}'>🔍 全文搜索「{html.escape(name)}」</a></p></div>")
+        body = head + render_company_timeline(name, rows)
+        return Response.html(_layout(f"公司：{name}", body))
 
     # ── T13-B 全站情报搜索 ─────────────────────────
     def _open_db(self):
@@ -485,7 +596,8 @@ class WebApp:
             # 公司 TOP
             b.append('<div class="card"><h2>🏢 高频公司 / 机构 TOP 15</h2><p>')
             for c in (s.get("top_companies") or [])[:15]:
-                b.append(f'<span class="tag">{html.escape(c["name"])} · {c["mentions"]}次/{c["days"]}天</span> ')
+                nm = c["name"]
+                b.append(f'<a class="tag" href="/company/{quote(nm)}">{html.escape(nm)} · {c["mentions"]}次/{c["days"]}天</a> ')
             b.append("</p></div>")
             # 融资热点
             fh = funding_hotspots(conn, weeks=8, top=12)
