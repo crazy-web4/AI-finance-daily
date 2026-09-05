@@ -1,0 +1,34 @@
+# AI 财经日报 · 固定依赖（T11-P0 基线固化，锁定版本）
+#
+# 单一解释器原则：运行与测试都用同一个 Python 解释器，避免 3.12/3.14 双解释器
+# 依赖漂移（playwright 在 3.14、pytest 在 3.12 的踩坑）。推荐用项目内 venv：
+#
+#   /opt/homebrew/bin/python3.12 -m venv .venv
+#   .venv/bin/python -m pip install -U pip
+#   .venv/bin/python -m pip install -r requirements.txt
+#   .venv/bin/playwright install chromium      # 仅 PDF 需要，可选
+#
+# 之后统一用 .venv/bin/python（或先 source .venv/bin/activate）跑 pytest / run_daily。
+
+# ---- 运行时核心依赖（run_daily / main / app 运行必需）----
+pydantic==2.13.4
+PyYAML==6.0.3
+python-dotenv==1.2.2
+openai==3.3.1
+Jinja2==3.1.6
+MarkupSafe==3.0.3
+httpx==0.28.1
+Pillow==12.2.0
+
+# ---- 测试（双验证之 pytest 必需）----
+pytest==9.1.1
+
+# ---- 可选：PDF 渲染（缺失时 run_daily 自动降级为 HTML+Markdown，不阻断）----
+# 装好本包后仍需下载浏览器内核：playwright install chromium
+playwright==1.62.0
+
+# ---- 可选：系统资源感知（缺失时退化为纯负载判断，见 app/utils/resource.py）----
+psutil==7.2.2
+
+# ---- 可选：scripts/pdf_to_report.py 逆向工具使用，主流程不依赖 ----
+PyMuPDF==1.26.7

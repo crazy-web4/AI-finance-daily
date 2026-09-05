@@ -4,6 +4,8 @@ __pycache__/
 *.pyc
 .idea/
 *.pdf
+.venv/
+venv/
 
 # 运行时/缓存/系统文件
 .DS_Store

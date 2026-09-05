@@ -27,6 +27,11 @@ OK, WARN, ERROR = "ok", "warn", "error"
 
 ICON = {OK: "✅", WARN: "⚠️ ", ERROR: "❌"}
 
+# 运行主流程必需的第三方模块（import 名；pip 名见 requirements.txt）
+CORE_RUNTIME_MODULES = ("pydantic", "yaml", "dotenv", "openai", "jinja2", "httpx", "PIL")
+# 双验证所需的开发/测试模块（缺失不阻断运行，但无法跑 pytest 验证）
+DEV_MODULES = ("pytest",)
+
 
 @dataclass
 class CheckResult:
@@ -48,6 +53,63 @@ def _check_python(min_version: tuple[int, int] = (3, 10)) -> CheckResult:
                        f"Python {platform.python_version()} 过低",
                        f"升级到 Python {min_version[0]}.{min_version[1]}+")
 
+
+def _in_venv() -> bool:
+    """是否运行在虚拟环境（venv / conda）内。"""
+    if os.environ.get("VIRTUAL_ENV") or os.environ.get("CONDA_PREFIX"):
+        return True
+    return sys.prefix != getattr(sys, "base_prefix", sys.prefix)
+
+
+def _check_interpreter(in_venv: bool | None = None,
+                       executable: str | None = None,
+                       version: str | None = None) -> CheckResult:
+    """解释器/虚拟环境一致性（T11-P0）：推荐固定单一 venv，避免多版本依赖漂移。"""
+    in_venv = _in_venv() if in_venv is None else in_venv
+    exe = executable or sys.executable
+    ver = version or platform.python_version()
+    if in_venv:
+        return CheckResult("解释器/虚拟环境", OK,
+                           f"venv 内运行：{exe}（Python {ver}），依赖隔离、单一解释器可复现")
+    return CheckResult("解释器/虚拟环境", WARN,
+                       f"系统解释器：{exe}（Python {ver}），未激活 venv；"
+                       f"多版本并存时依赖易漂移（PATH 上 python3.12 可能命中无依赖的裸解释器）",
+                       "固定单一解释器：/opt/homebrew/bin/python3.12 -m venv .venv && "
+                       ".venv/bin/python -m pip install -r requirements.txt，"
+                       "之后统一用 .venv/bin/python 跑 pytest / run_daily")
+
+
+def _probe_imports(modules: tuple[str, ...]) -> dict[str, bool]:
+    out: dict[str, bool] = {}
+    for mod in modules:
+        try:
+            __import__(mod)
+            out[mod] = True
+        except Exception:
+            out[mod] = False
+    return out
+
+
+def _check_dependencies(name: str, modules: tuple[str, ...], missing_level: str,
+                        probe: Callable[[tuple[str, ...]], dict[str, bool]] | None = None,
+                        executable: str | None = None) -> CheckResult:
+    """依赖一致性（T11-P0）：核心依赖缺失给 ERROR，测试依赖缺失给 WARN。
+
+
+    修复命令统一用 ``sys.executable``（当前解释器），避免用户照着
+    ``python3.12 -m pip`` 装到 PATH 上另一个影子解释器里。
+    """
+    probe = probe or _probe_imports
+    status = probe(modules)
+    missing = [m for m in modules if not status.get(m, False)]
+    exe = executable or sys.executable
+    if not missing:
+        return CheckResult(name, OK, f"{len(modules)} 个依赖均可导入（{', '.join(modules)}）")
+    fix = ("装进当前解释器，勿用 PATH 上的影子解释器：\n"
+           f'  "{exe}" -m pip install -r requirements.txt\n'
+           "或固定 venv：python3.12 -m venv .venv && "
+           ".venv/bin/python -m pip install -r requirements.txt")
+    return CheckResult(name, missing_level, f"缺少依赖：{', '.join(missing)}", fix)
 
 def _check_env_key(env: dict[str, str], env_path: Path) -> CheckResult:
     key = env.get("ANYSEARCH_API_KEY", "")
@@ -145,7 +207,10 @@ def _check_optional_services(env: dict[str, str]) -> list[CheckResult]:
 
 
 def run_checks(base_dir: str | Path = ".", env: dict[str, str] | None = None,
-               playwright_probe: Callable[[], CheckResult] | None = None) -> list[CheckResult]:
+               playwright_probe: Callable[[], CheckResult] | None = None,
+               interpreter_check: Callable[[], CheckResult] | None = None,
+               runtime_dep_check: Callable[[], CheckResult] | None = None,
+               dev_dep_check: Callable[[], CheckResult] | None = None) -> list[CheckResult]:
     """执行全部自检，返回检查结果列表。"""
     base = Path(base_dir)
     env = env if env is not None else dict(os.environ)
@@ -153,6 +218,11 @@ def run_checks(base_dir: str | Path = ".", env: dict[str, str] | None = None,
 
     results: list[CheckResult] = []
     results.append(_check_python())
+    results.append((interpreter_check or _check_interpreter)())
+    results.append((runtime_dep_check
+                    or (lambda: _check_dependencies("运行依赖一致性", CORE_RUNTIME_MODULES, ERROR)))())
+    results.append((dev_dep_check
+                    or (lambda: _check_dependencies("测试依赖(pytest)", DEV_MODULES, WARN)))())
     results.append(_check_env_key(env, base / ".env"))
     results.append(_check_llm(env))
     results.append((playwright_probe or _check_playwright)())
@@ -169,7 +239,8 @@ def format_report(results: list[CheckResult]) -> str:
     for r in results:
         lines.append(f"{ICON.get(r.level, '?')} {r.name}: {r.message}")
         if r.fix:
-            lines.append(f"     → {r.fix}")
+            for i, fl in enumerate(r.fix.splitlines()):
+                lines.append(f"     → {fl}" if i == 0 else f"       {fl}")
     errors = [r for r in results if r.level == ERROR]
     warns = [r for r in results if r.level == WARN]
     lines.append("─" * 56)

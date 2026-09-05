@@ -482,6 +482,25 @@ def init_system():
     return config, logger, perf_monitor
 
 
+def preflight_pdf_warnings(no_pdf: bool, pw_available: bool) -> list[str]:
+    """T11-P0 启动预检：决定是否需要在跑长流程前提前告知 PDF 将降级。
+
+    纯函数（布尔入参），便于单测 mock；调用方负责用
+    :func:`app.utils.fallback.playwright_available` 探测真实可用性。
+    第 9 批 E1 曾在跑完约 40 分钟后才在 PDF 阶段因缺 playwright 崩掉，
+    这里把告警提前到采集之前，避免用户白等。
+
+    返回需要提前打印的告警行（空列表表示无需告警、可正常出 PDF）。
+    """
+    if no_pdf or pw_available:
+        return []
+    return [
+        "⚠️  启动预检: playwright/chromium 不可用 → 本次将降级输出 HTML + Markdown（不出 PDF）",
+        "    安装后可出 PDF（固定解释器）: .venv/bin/python -m pip install playwright "
+        "&& .venv/bin/playwright install chromium",
+    ]
+
+
 async def main():
     parser = argparse.ArgumentParser(description="AI 财经日报 · 端到端生成")
     parser.add_argument("--config", type=str, default="config/app_config.yaml",
@@ -510,6 +529,16 @@ async def main():
     logger.info("AI 财经日报生成器启动", date=today)
     print("🚀 AI 财经日报生成器", flush=True)
     print(f"📅 日期: {today}", flush=True)
+
+    # T11-P0: 启动预检——playwright/chromium 不可用时在采集前就告警，
+    # 避免跑完全部长流程（采集/分析约数十分钟）才在 PDF 阶段发现降级。
+    if (args.test or args.full or bool(args.from_file)) and not args.no_pdf:
+        try:
+            from app.utils.fallback import playwright_available
+            for _line in preflight_pdf_warnings(args.no_pdf, playwright_available()):
+                print(_line, flush=True)
+        except Exception:
+            pass  # 预检本身绝不阻断主流程
 
     ok = True
     try:

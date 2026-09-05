@@ -78,5 +78,24 @@ class TestQueryQualifier(unittest.TestCase):
         self.assertEqual(q.count("update"), 1)
 
 
+class TestPreflightPdfWarnings(unittest.TestCase):
+    """T11-P0: 缺 playwright 时启动即告警，而非跑完全流程才在 PDF 阶段崩。"""
+
+    def test_no_warning_when_pdf_skipped(self):
+        self.assertEqual(run_daily.preflight_pdf_warnings(no_pdf=True, pw_available=False), [])
+
+    def test_no_warning_when_playwright_ready(self):
+        self.assertEqual(run_daily.preflight_pdf_warnings(no_pdf=False, pw_available=True), [])
+
+    def test_warns_early_when_playwright_missing(self):
+        lines = run_daily.preflight_pdf_warnings(no_pdf=False, pw_available=False)
+        self.assertTrue(lines)
+        joined = "\n".join(lines)
+        self.assertIn("降级", joined)
+        self.assertIn("playwright", joined)
+        # 告警必须给出可执行的固定解释器修复命令
+        self.assertIn(".venv/bin/python", joined)
+
+
 if __name__ == "__main__":
     unittest.main()
