@@ -107,6 +107,11 @@ mark{background:#faf089;padding:0 2px;border-radius:2px}
 .toc-list{columns:2;list-style:none;padding:0;margin:0}.toc-list li{margin:4px 0;font-size:14px;break-inside:avoid}
 .item-tools{margin-top:6px;display:flex;gap:14px;align-items:center}.detail-link{font-size:13px;text-decoration:none;font-weight:600}
 .detail-title{font-size:20px;color:#1a202c;line-height:1.4}.src-list{list-style:none;padding:0;margin:0}.src-list li{margin:6px 0;font-size:13px;word-break:break-all}
+
+.task-status{margin-top:12px;padding:10px 14px;border-radius:8px;font-size:14px}
+.task-status.running{background:#ebf8ff;color:#2c5282;border:1px solid #bee3f8}
+.task-status.success{background:#f0fff4;color:#22543d;border:1px solid #9ae6b4}
+.task-status.failed{background:#fff5f5;color:#742a2a;border:1px solid #feb2b2}
 """
 
 
@@ -139,6 +144,25 @@ def _hl(text, q):
     from app.web.readview import highlight
     return highlight(text, q)
 
+
+TASK_STATUS_JS = """
+function refreshTaskStatus(){
+  fetch('/api/trigger/status').then(r=>r.json()).then(d=>{
+    var el=document.getElementById('task-status'); if(!el) return;
+    el.className='task-status';
+    if(d.state==='idle'){el.classList.add('muted');el.textContent='';}
+    else if(d.state==='running'){el.classList.add('running');
+      el.textContent='⏳ '+({daily:'出报',weekly:'周报生成'}[d.kind]||'任务')+'运行中（'+(d.mode||'')+'）…';}
+    else if(d.state==='success'){el.classList.add('success');
+      el.textContent='✅ '+(d.kind==='weekly'?'周报生成':('出报完成 · '+(d.elapsed_sec||'?')+'s'))+
+        (d.exporters?(' · 导出 '+d.exporters.join('/')):'');}
+    else if(d.state==='failed'){el.classList.add('failed');
+      el.textContent='❌ 任务失败'+(d.flags&&d.flags.length?('：'+d.flags[d.flags.length-1]):'');}
+    else {el.classList.add('muted');el.textContent='任务已结束';}
+  }).catch(()=>{});
+}
+refreshTaskStatus(); setInterval(refreshTaskStatus,5000);
+"""
 
 
 def _badge(ok: bool, label: str) -> str:
@@ -199,6 +223,12 @@ class WebApp:
                 return self._post_subscriptions()
             if method == "GET" and route == "/api/subscriptions":
                 return self._api_subscriptions()
+            if method == "GET" and route == "/api/trigger/status":
+                return Response.json(self.trigger_status())
+            if method == "POST" and route == "/weekly/build":
+                return self._trigger_weekly(parsed.query, body)
+            if method == "POST" and route == "/digest/preview":
+                return self._digest_preview(body)
             if method == "GET" and route == "/api/reports":
                 return Response.json(self.api_reports())
             if method == "GET" and route == "/api/health":
@@ -307,7 +337,9 @@ class WebApp:
             '<form method="post" action="/trigger" style="margin-top:12px;display:flex;gap:10px;align-items:center;flex-wrap:wrap">'
             '<button class="btn" type="submit" name="mode" value="test">🚀 触发出报（测试·省额度）</button>'
             '<button class="btn" type="submit" name="mode" value="full" style="background:#2f855a">📦 触发出报（全量·完整）</button>'
-            '<span class="muted">后台运行，进度见 logs/web_trigger.log</span></form>')
+            '<span class="muted">后台运行，状态实时见下方</span></form>'
+            '<div id="task-status" class="task-status muted">⏳ 检查任务状态…</div>'
+            '<script>' + TASK_STATUS_JS + '</script>')
         cards.append("</div>")
 
         rows = []
@@ -465,10 +497,13 @@ class WebApp:
         ad = _date.fromisoformat(mon)
         prev_mon = (ad - _td(days=7)).isoformat()
         next_mon = (ad + _td(days=7)).isoformat()
+        build_btn = ('<form method="post" action="/weekly/build" style="display:inline">'
+                     f'<input type="hidden" name="date" value="{mon}">'
+                     '<button class="btn" type="submit" style="background:#2f855a">⚙️ 生成/刷新离线周报(HTML·PDF)</button></form>')
         pager = ('<div class="pager">'
                  f'<a class="btn" href="/weekly?date={prev_mon}">← 上一周</a>'
                  f'<a class="btn" href="/weekly?date={next_mon}">下一周 →</a>'
-                 f'<a class="btn" href="/archive">🗂 归档</a></div>')
+                 f'<a class="btn" href="/archive">🗂 归档</a>{build_btn}</div>')
         if not reports:
             body = (f"<div class='card'>{pager}<h2>📅 周报 {mon} ~ {sun}</h2>"
                     "<p class='muted'>该周区间内无日报数据，试试切换周。</p></div>")
@@ -708,16 +743,41 @@ class WebApp:
         if subs:
             b.append("<p>已有订阅：</p><ul>")
             for f in sorted(subs):
-                s = store.get(f.stem)
-                b.append(f'<li><strong>{html.escape(s.name)}</strong>：公司={html.escape("、".join(s.companies) or "—")} ｜ 栏目={html.escape("、".join(s.categories) or "—")}</li>')
+                sub = store.get(f.stem)
+                chans = []
+                if getattr(sub, "webhook", ""):
+                    chans.append("🔔webhook")
+                if getattr(sub, "emails", ""):
+                    chans.append(f"📧{len(sub.emails)}邮箱")
+                chan_s = (" ｜ 通道=" + "、".join(chans)) if chans else " ｜ 通道=未配置（可用全局 ALERT_WEBHOOK_URL）"
+                b.append(f'<li><strong>{html.escape(sub.name)}</strong>：公司={html.escape("、".join(sub.companies) or "—")} '
+                         f'｜ 栏目={html.escape("、".join(sub.categories) or "—")}{chan_s}</li>')
             b.append("</ul>")
         b.append(
             '<form class="sub-form" method="post" action="/subscriptions">'
             '<p>订阅名（默认 default）：<input type="text" name="name" value="default"></p>'
             '<p>关注公司（逗号分隔，如 OpenAI,Anthropic,英伟达）：<br><input type="text" name="companies" size="60"></p>'
             '<p>关注栏目（栏目 id，逗号分隔）：<br><input type="text" name="categories" size="60" placeholder="top_news,funding,model_tech,policy,research,industry,us_stocks"></p>'
+            '<p>推送 Webhook（可选，钉钉/企微机器人地址；留空用全局 ALERT_WEBHOOK_URL）：<br>'
+            '<input type="text" name="webhook" size="60" placeholder="https://oapi.dingtalk.com/robot/send?access_token=..."></p>'
+            '<p>推送邮箱（可选，逗号分隔；需配 DIGEST_SMTP_*）：<br><input type="text" name="emails" size="60" placeholder="you@example.com"></p>'
             '<button class="btn" type="submit">保存订阅</button></form>')
-        b.append('<p class="muted">保存后到 <a href="/my">⭐ 我的订阅</a> 查看个性化日报。</p></div>')
+        b.append(
+            '<div class="card"><h2>👁 预览推送摘要</h2>'
+            '<p class="muted">不发送，仅按下面条件生成将推送的个性化摘要（基于最新一期日报）。</p>'
+            '<form class="sub-form" id="preview-form">'
+            '<p>公司 <input type="text" name="companies" size="30" placeholder="OpenAI,Anthropic"> '
+            '栏目 <input type="text" name="categories" size="24" placeholder="funding"></p>'
+            '<button class="btn" type="button" onclick="previewDigest()">预览</button></form>'
+            '<pre id="preview-out" style="white-space:pre-wrap;background:#f7fafc;padding:12px;border-radius:8px;font-size:13px;display:none"></pre></div>')
+        b.append(
+            '<script>function previewDigest(){var f=document.getElementById("preview-form");'
+            'var params=new URLSearchParams(new FormData(f));'
+            'fetch("/digest/preview",{method:"POST",body:params}).then(r=>r.json()).then(d=>{'
+            'var el=document.getElementById("preview-out");el.style.display="block";'
+            'el.textContent=d.ok?("将推送 "+d.items+" 条\n\n"+d.text):("预览失败："+(d.error||""));});}</script>')
+        b.append('<p class="muted">保存后到 <a href="/my">⭐ 我的订阅</a> 查看个性化日报；'
+                 '出报时设 <code>DIGEST_PUSH=1</code> 自动推送，或 <code>main.py digest</code> 手动推。</p></div>')
         return Response.html(_layout("订阅管理", "".join(b)))
 
     def _post_subscriptions(self) -> Response:
@@ -727,7 +787,10 @@ class WebApp:
         name = (data.get("name", ["default"])[0] or "default").strip() or "default"
         companies = [c.strip() for c in (data.get("companies", [""])[0]).split(",") if c.strip()]
         categories = [c.strip() for c in (data.get("categories", [""])[0]).split(",") if c.strip()]
-        self._sub_store().save(Subscription(name=name, companies=companies, categories=categories))
+        webhook = (data.get("webhook", [""])[0] or "").strip()
+        emails = [e.strip() for e in (data.get("emails", [""])[0]).split(",") if e.strip()]
+        self._sub_store().save(Subscription(name=name, companies=companies, categories=categories,
+                                            webhook=webhook, emails=emails))
         body = (f'<div class="card"><h2>✅ 订阅已保存</h2><p>订阅 <strong>{html.escape(name)}</strong>：'
                 f'公司 {html.escape("、".join(companies) or "—")} ｜ 栏目 {html.escape("、".join(categories) or "—")}</p>'
                 f'<p><a class="btn" href="/my?user={quote(name)}">查看我的订阅日报 →</a> '
@@ -740,7 +803,9 @@ class WebApp:
         if d.exists():
             for f in sorted(d.glob("*.yaml")):
                 s = self._sub_store().get(f.stem)
-                out.append({"name": s.name, "companies": s.companies, "categories": s.categories})
+                out.append({"name": s.name, "companies": s.companies, "categories": s.categories,
+                            "webhook": getattr(s, "webhook", "") or "",
+                            "emails": getattr(s, "emails", []) or []})
         return Response.json({"subscriptions": out})
 
 
@@ -774,14 +839,110 @@ class WebApp:
             log_dir = self.base_dir / "logs"
             log_dir.mkdir(exist_ok=True)
             logf = open(log_dir / "web_trigger.log", "ab")
-            subprocess.Popen(cmd, cwd=str(self.base_dir), stdout=logf, stderr=logf,
-                             start_new_session=True)
+            proc = subprocess.Popen(cmd, cwd=str(self.base_dir), stdout=logf, stderr=logf,
+                                    start_new_session=True)
+            self._write_trigger_state({
+                "pid": proc.pid, "mode": mode, "kind": "daily",
+                "started_at": report_now().isoformat(),
+                "log": "logs/web_trigger.log", "date": report_now().date().isoformat(),
+            })
             label = "测试模式（省额度）" if mode == "test" else "全量模式（完整出报）"
-            return Response.json({"ok": True, "mode": mode,
-                                  "message": f"已在后台启动出报（{label}），详见 logs/web_trigger.log",
+            return Response.json({"ok": True, "mode": mode, "pid": proc.pid,
+                                  "message": f"已在后台启动出报（{label}），可在首页查看进度",
                                   "cmd": cmd})
         except Exception as e:  # noqa: BLE001
             return Response.json({"ok": False, "error": str(e)}, status=500)
+
+    # ── T15-A 出报状态 ─────────────────────────────
+    def _trigger_state_path(self):
+        return self.base_dir / "logs" / "trigger_state.json"
+
+    def _write_trigger_state(self, state: dict) -> None:
+        p = self._trigger_state_path()
+        p.parent.mkdir(exist_ok=True)
+        p.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    @staticmethod
+    def _pid_alive(pid: int) -> bool:
+        try:
+            os.kill(pid, 0)
+            return True
+        except (OSError, ProcessLookupError):
+            return False
+
+    def trigger_status(self) -> dict:
+        """最近一次后台任务状态：running / done / failed / idle。"""
+        p = self._trigger_state_path()
+        if not p.exists():
+            return {"state": "idle"}
+        try:
+            st = json.loads(p.read_text(encoding="utf-8"))
+        except Exception:  # noqa: BLE001
+            return {"state": "idle"}
+        pid = st.get("pid")
+        if pid and self._pid_alive(int(pid)):
+            return {"state": "running", **st}
+        # 进程结束：结合当日 runlog 判定结果
+        result = {"state": "finished", **st}
+        date = st.get("date")
+        if date and st.get("kind") == "daily":
+            rl = self.store.load_runlog(date) or {}
+            if rl:
+                result["success"] = rl.get("success")
+                result["elapsed_sec"] = rl.get("elapsed_sec")
+                result["exporters"] = rl.get("exporters")
+                result["digest"] = rl.get("digest")
+                result["state"] = "success" if rl.get("success") else "failed"
+                flags = rl.get("flags") or []
+                result["flags"] = flags[-3:]
+        return result
+
+    # ── T15-C 周报一键生成（后台子进程）────────────
+    def _trigger_weekly(self, querystring: str = "", body: bytes = b"") -> Response:
+        try:
+            params = {k: v[0] for k, v in parse_qs(querystring).items()}
+            if body:
+                params.update({k: v[0] for k, v in parse_qs(body.decode("utf-8", "ignore")).items()})
+            anchor = params.get("date") or (self.store.latest_or_today().date if self.store.latest_or_today() else "")
+            cmd = [sys.executable, "main.py", "weekly"]
+            if anchor:
+                cmd += ["--week-of", anchor]
+            log_dir = self.base_dir / "logs"
+            log_dir.mkdir(exist_ok=True)
+            logf = open(log_dir / "weekly_build.log", "ab")
+            proc = subprocess.Popen(cmd, cwd=str(self.base_dir), stdout=logf, stderr=logf,
+                                    start_new_session=True)
+            self._write_trigger_state({
+                "pid": proc.pid, "mode": "weekly", "kind": "weekly",
+                "started_at": report_now().isoformat(),
+                "log": "logs/weekly_build.log", "date": anchor,
+            })
+            return Response.json({"ok": True, "pid": proc.pid, "cmd": cmd,
+                                  "message": "已在后台生成离线周报（HTML/PDF），完成后刷新周报页"})
+        except Exception as e:  # noqa: BLE001
+            return Response.json({"ok": False, "error": str(e)}, status=500)
+
+    # ── T15-B 推送摘要预览（不发网络）──────────────
+    def _digest_preview(self, body: bytes = b"") -> Response:
+        from app.personalization.digest import digest_markdown, digest_text
+        from app.personalization.filter import filter_report
+        data = parse_qs(body.decode("utf-8", "ignore"))
+        companies = [c.strip() for c in (data.get("companies", [""])[0]).split(",") if c.strip()]
+        categories = [c.strip() for c in (data.get("categories", [""])[0]).split(",") if c.strip()]
+        name = (data.get("name", ["default"])[0] or "default").strip() or "default"
+        date = data.get("date", [""])[0].strip()
+        art = self.store.find_on_date(date) if date else self.store.latest_or_today()
+        if art is None:
+            return Response.json({"ok": False, "error": "暂无日报可预览"}, status=404)
+        report = self.store.load_report(art.date)
+        if report is None:
+            return Response.json({"ok": False, "error": "日报解析失败"}, status=500)
+        filtered = filter_report(report, companies, categories, user=name)
+        return Response.json({
+            "ok": True, "date": art.date, "items": filtered.total_items,
+            "text": digest_text(filtered, name),
+            "markdown": digest_markdown(filtered, name),
+        })
 
 
 # ── HTTP 传输层（薄封装） ──────────────────────────────

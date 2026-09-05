@@ -249,3 +249,79 @@ class TestWebWeekly(unittest.TestCase):
     def test_weekly_nav_link(self):
         r = self.app.handle("GET", "/")
         self.assertIn("/weekly", r.body.decode())
+
+
+class TestWebT15(unittest.TestCase):
+    """第15批：任务状态可见 / 推送预览 / 周报生成入口 / 订阅通道字段。"""
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        make_store(self.tmp, ("2026-09-01",))
+        self.app = WebApp(reports_dir=self.tmp / "data" / "reports", base_dir=self.tmp)
+
+    def test_status_idle(self):
+        r = self.app.handle("GET", "/api/trigger/status")
+        self.assertEqual(r.status, 200)
+        self.assertEqual(json.loads(r.body)["state"], "idle")
+
+    def test_status_running_then_success(self):
+        import os as _os
+        # 存活进程（自己）→ running
+        self.app._write_trigger_state({"pid": _os.getpid(), "mode": "test",
+                                       "kind": "daily", "date": "2026-09-01", "started_at": "x"})
+        self.assertEqual(self.app.trigger_status()["state"], "running")
+        # 已死 pid + 当日成功 runlog → success
+        import time as _time
+        rdir = self.tmp / "data" / "reports" / "2026-09-01"
+        (rdir / f"run_{int(_time.time()*1000)+1}.json").write_text(json.dumps(
+            {"success": True, "elapsed_sec": 88.0, "exporters": ["markdown"], "flags": []}),
+            encoding="utf-8")
+        self.app._write_trigger_state({"pid": 999999, "mode": "test",
+                                       "kind": "daily", "date": "2026-09-01", "started_at": "x"})
+        st = self.app.trigger_status()
+        self.assertEqual(st["state"], "success")
+        self.assertEqual(st["elapsed_sec"], 88.0)
+
+    def test_digest_preview(self):
+        body = "companies=OpenAI&categories=funding".encode()
+        r = self.app.handle("POST", "/digest/preview", body=body)
+        self.assertEqual(r.status, 200)
+        d = json.loads(r.body)
+        self.assertTrue(d["ok"])
+        self.assertGreaterEqual(d["items"], 1)
+        self.assertIn("OpenAI", d["text"])
+
+    def test_digest_preview_no_report(self):
+        r = self.app.handle("POST", "/digest/preview", body=b"date=1999-01-01")
+        self.assertEqual(r.status, 404)
+
+    def test_subscription_form_has_channels(self):
+        r = self.app.handle("GET", "/subscriptions")
+        body = r.body.decode()
+        self.assertIn('name="webhook"', body)
+        self.assertIn('name="emails"', body)
+        self.assertIn("预览推送摘要", body)
+
+    def test_subscription_post_saves_channels(self):
+        body = "name=alice&companies=OpenAI&webhook=https://oapi.dingtalk.com/x&emails=a@x.com,b@x.com".encode()
+        r = self.app.handle("POST", "/subscriptions", body=body)
+        self.assertEqual(r.status, 200)
+        subs = json.loads(self.app.handle("GET", "/api/subscriptions").body)["subscriptions"]
+        alice = next(s for s in subs if s["name"] == "alice")
+        self.assertEqual(alice["webhook"], "https://oapi.dingtalk.com/x")
+        self.assertEqual(alice["emails"], ["a@x.com", "b@x.com"])
+
+    def test_weekly_page_has_build_button(self):
+        r = self.app.handle("GET", "/weekly")
+        self.assertEqual(r.status, 200)
+        self.assertIn("/weekly/build", r.body.decode())
+
+    def test_weekly_build_starts_subprocess(self):
+        # 用一个不会真正跑周报的命令替换 trigger_cmd 风险高；这里仅验证路由返回 ok 与 pid
+        r = self.app.handle("POST", "/weekly/build?date=2026-09-01", body=b"")
+        self.assertEqual(r.status, 200)
+        d = json.loads(r.body)
+        self.assertTrue(d["ok"])
+        self.assertIn("pid", d)
+        # 状态文件应记录 weekly 任务
+        self.assertEqual(self.app.trigger_status()["kind"], "weekly")
