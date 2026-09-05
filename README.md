@@ -150,6 +150,17 @@ python run_daily.py --full --backfill
 | `main.py` | 只做**采集**，调试搜索策略 | `python main.py info` / `python main.py collect --test` |
 | `run_daily.py` | **端到端**生成日报 | `python run_daily.py --test` / `--full` / `--from-file <json>` |
 
+
+### 本地 Web 看板（`python main.py web`）
+
+启动后访问 `http://127.0.0.1:8910`，零第三方依赖：
+
+- **📖 在线读报** `/read/<date>`：浏览器直接读正文——导读、关键数据、正文分段、编辑点评、可点击来源，无需下载 PDF。
+- **🔍 全站搜索** `/search?q=关键词`：跨全部历史日报全文检索（SQLite FTS5 + 中文模糊召回），命中关键词高亮，一键跳到当日阅读页；`/api/search` 出 JSON。
+- **📈 趋势洞察** `/insights`：栏目分布、高频公司 TOP、近 8 周融资热点、本周新增/淡出头条、出报量趋势（纯 CSS 图表）。
+- **⭐ 我的订阅** `/my` + `/subscriptions`：网页上设置关注公司/栏目，自动生成个性化过滤版日报（复用 CLI 同一套个性化引擎）。
+- **🚀 一键出报**：首页可选择「测试·省额度」或「全量·完整」模式后台触发，进度见 `logs/web_trigger.log`。
+
 六大固定栏目：**今日头条 · 模型发布与技术进展 · 融资与资本动态 · 政策与监管 · 学术与研究突破 · 市场与产业动态**
 
 ---

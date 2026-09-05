@@ -34,79 +34,88 @@ def search(
     category: str | None = None,
     importance_min: int | None = None,
     limit: int = 50,
+    conn: Optional[Any] = None,
 ) -> list[dict[str, Any]]:
-    conn = connect(db_path)
+    own = conn is None
+    conn = connect(db_path) if own else conn
     try:
-        where: list[str] = []
-        params: list[Any] = []
-        if days is not None:
-            cutoff = (report_now() - timedelta(days=days)).date().isoformat()
-            where.append("date >= ?")
-            params.append(cutoff)
-        if category:
-            where.append("section_id = ?")
-            params.append(category)
-        if importance_min is not None:
-            where.append("importance >= ?")
-            params.append(importance_min)
-        base_where = (" WHERE " + " AND ".join(where)) if where else ""
-
-        matched: dict[str, dict[str, Any]] = {}
-
-        # 1) FTS5 MATCH（拉丁文 / 多词）
-        if keyword.strip():
-            try:
-                fts_sql = (
-                    "SELECT i.* FROM items_fts f JOIN items i ON i.id = f.rowid "
-                    f"{'WHERE' if not where else 'WHERE ' + ' AND '.join(where) + ' AND '} "
-                    "items_fts MATCH ? ORDER BY rank LIMIT ?"
-                )
-                # 重建带 join 条件的语句
-                cond = where + ["items_fts MATCH ?"]
-                sql = (
-                    "SELECT i.* FROM items_fts f JOIN items i ON i.id=f.rowid "
-                    "WHERE " + " AND ".join(cond) + " ORDER BY f.rank LIMIT ?"
-                )
-                rows = conn.execute(sql, (*params, _fts_query(keyword), limit)).fetchall()
-                for r in rows:
-                    d = dict(r)
-                    d["match"] = "fts"
-                    matched[d["item_uid"]] = d
-            except Exception:
-                pass
-
-            # 2) LIKE 兜底（中文子串 / 召回补充）
-            like = f"%{keyword.strip()}%"
-            like_sql = (
-                "SELECT * FROM items " + base_where +
-                (" AND " if where else " WHERE ") +
-                "(title LIKE ? OR details LIKE ? OR analysis LIKE ?) "
-                "ORDER BY date DESC, importance DESC LIMIT ?"
-            )
-            rows = conn.execute(like_sql, (*params, like, like, like, limit)).fetchall()
-            for r in rows:
-                d = dict(r)
-                if d["item_uid"] not in matched:
-                    d["match"] = "like"
-                    matched[d["item_uid"]] = d
-        else:
-            rows = conn.execute(
-                f"SELECT * FROM items {base_where} ORDER BY date DESC, importance DESC LIMIT ?",
-                (*params, limit),
-            ).fetchall()
-            for r in rows:
-                d = dict(r)
-                d["match"] = "browse"
-                matched[d["item_uid"]] = d
-
-        results = list(matched.values())
-        results.sort(key=lambda x: (x["date"], x["importance"]), reverse=True)
-        for r in results:
-            r["companies"] = json.loads(r.get("companies") or "[]")
-            r["sources"] = json.loads(r.get("sources") or "[]")
-        return results[:limit]
+        return search_conn(conn, keyword=keyword, days=days, category=category,
+                           importance_min=importance_min, limit=limit)
     finally:
-        conn.close()
+        if own:
+            conn.close()
+
+
+def search_conn(
+    conn: Any,
+    keyword: str = "",
+    days: int | None = None,
+    category: str | None = None,
+    importance_min: int | None = None,
+    limit: int = 50,
+) -> list[dict[str, Any]]:
+    where: list[str] = []
+    params: list[Any] = []
+    if days is not None:
+        cutoff = (report_now() - timedelta(days=days)).date().isoformat()
+        where.append("date >= ?")
+        params.append(cutoff)
+    if category:
+        where.append("section_id = ?")
+        params.append(category)
+    if importance_min is not None:
+        where.append("importance >= ?")
+        params.append(importance_min)
+    base_where = (" WHERE " + " AND ".join(where)) if where else ""
+
+    matched: dict[str, dict[str, Any]] = {}
+
+    if keyword.strip():
+        # 1) FTS5 MATCH（拉丁文 / 多词）
+        try:
+            cond = where + ["items_fts MATCH ?"]
+            sql = (
+                "SELECT i.* FROM items_fts f JOIN items i ON i.id=f.rowid "
+                "WHERE " + " AND ".join(cond) + " ORDER BY f.rank LIMIT ?"
+            )
+            rows = conn.execute(sql, (*params, _fts_query(keyword), limit)).fetchall()
+            for r in rows:
+                d = dict(r)
+                d["match"] = "fts"
+                matched[d["item_uid"]] = d
+        except Exception:
+            pass
+
+        # 2) LIKE 兜底（中文子串 / 召回补充）
+        like = f"%{keyword.strip()}%"
+        like_sql = (
+            "SELECT * FROM items " + base_where +
+            (" AND " if where else " WHERE ") +
+            "(title LIKE ? OR details LIKE ? OR analysis LIKE ?) "
+            "ORDER BY date DESC, importance DESC LIMIT ?"
+        )
+        rows = conn.execute(like_sql, (*params, like, like, like, limit)).fetchall()
+        for r in rows:
+            d = dict(r)
+            if d["item_uid"] not in matched:
+                d["match"] = "like"
+                matched[d["item_uid"]] = d
+    else:
+        rows = conn.execute(
+            f"SELECT * FROM items {base_where} ORDER BY date DESC, importance DESC LIMIT ?",
+            (*params, limit),
+        ).fetchall()
+        for r in rows:
+            d = dict(r)
+            d["match"] = "browse"
+            matched[d["item_uid"]] = d
+
+    results = list(matched.values())
+    results.sort(key=lambda x: (x["date"], x["importance"]), reverse=True)
+    for r in results:
+        r["companies"] = json.loads(r.get("companies") or "[]")
+        r["sources"] = json.loads(r.get("sources") or "[]")
+    return results[:limit]
 
 
 def stats(db_path: str | Path = DEFAULT_DB_PATH, since: str | None = None) -> dict[str, Any]:

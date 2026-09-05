@@ -29,11 +29,12 @@ from datetime import timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, Callable
-from urllib.parse import quote, unquote, urlparse
+from urllib.parse import parse_qs, quote, unquote, urlparse
 
 from app.storage.report_store import ReportArtifacts, ReportStore
 from app.utils.timeutil import report_now
 from app.web.feed import build_atom, build_rss
+from app.web.readview import render_reading_view
 
 
 @dataclass
@@ -71,18 +72,63 @@ th{background:#f7fafc;color:#4a5568}a{color:#2b6cb0}
 .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px}
 .stat{background:#ebf8ff;border-radius:8px;padding:14px;text-align:center}.stat .n{font-size:26px;font-weight:700;color:#2b6cb0}.stat .l{font-size:12px;color:#4a5568}
 code{background:#edf2f7;padding:1px 6px;border-radius:4px;font-size:13px}
+
+.banner{background:#fef3c7;border:1px solid #f6e05e;color:#744210;padding:10px 16px;border-radius:8px;margin-bottom:16px;font-size:14px}
+.read-card h2.sec-title{border-left:4px solid #4a5568;padding-left:10px;font-size:16px}
+.news{border-left:3px solid #4a5568;padding:6px 0 14px 14px;margin:14px 0}
+.news h4{margin:0 0 8px;font-size:15px;color:#1a202c}
+.news .rank{display:inline-block;min-width:22px;height:22px;line-height:22px;text-align:center;background:#2b6cb0;color:#fff;border-radius:50%;font-size:12px;margin-right:6px}
+.news p{margin:6px 0;font-size:14px;color:#2d3748}
+.news .ana{background:#ebf8ff;border-left:3px solid #2b6cb0;padding:8px 12px;border-radius:6px;font-size:13px;color:#2c5282;margin:8px 0}
+.kd-grid{display:flex;flex-wrap:wrap;gap:8px;margin:6px 0}
+.kd{background:#f7fafc;border:1px solid #e2e8f0;border-radius:6px;padding:4px 10px;font-size:13px}
+.kd-l{color:#718096;margin-right:6px}.kd-v{font-weight:600;color:#2b6cb0}
+.src{margin-top:6px;font-size:13px}.src a{margin-right:14px;text-decoration:none}
+.wc{font-size:12px;margin-top:4px}
+mark{background:#faf089;padding:0 2px;border-radius:2px}
+.searchbar{display:flex;gap:8px;margin:6px 0 14px;flex-wrap:wrap}
+.searchbar input[type=text]{flex:1;min-width:200px;padding:9px 12px;border:1px solid #cbd5e0;border-radius:6px;font-size:14px}
+.searchbar select,.searchbar button{padding:9px 12px;border-radius:6px;border:1px solid #cbd5e0;font-size:14px}
+.bar-row{display:flex;align-items:center;gap:10px;margin:6px 0;font-size:13px}
+.bar-row .lbl{width:150px;flex-shrink:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.bar{background:#2b6cb0;height:16px;border-radius:4px;min-width:2px}
+.bar-row .num{color:#4a5568}
+.heat{display:flex;gap:3px;align-items:flex-end;height:60px;margin:10px 0}
+.heat .col{flex:1;background:#63b3ed;border-radius:3px 3px 0 0;min-height:2px;position:relative}
+.sub-form input{padding:8px 10px;border:1px solid #cbd5e0;border-radius:6px;font-size:14px;margin:4px 6px 4px 0}
+.tag{display:inline-block;background:#edf2f7;border-radius:12px;padding:2px 10px;font-size:12px;margin:2px}
 """
 
 
 def _layout(title: str, body: str) -> str:
-    nav = ('<nav><a href="/">日报</a><a href="/health">运行健康</a><a href="/config">配置</a>'
-           '<a href="/feed.xml">RSS</a></nav>')
+    nav = ('<nav><a href="/">日报</a><a href="/search">🔍 搜索</a><a href="/insights">📈 洞察</a>'
+           '<a href="/my">⭐ 我的订阅</a><a href="/health">运行健康</a>'
+           '<a href="/config">配置</a><a href="/feed.xml">RSS</a></nav>')
+    searchbox = (
+        '<form class="searchbar" action="/search" method="get" style="margin:0">'
+        '<input type="text" name="q" placeholder="搜索情报：公司 / 关键词，如 OpenAI 融资" '
+        'style="flex:0 1 260px;min-width:160px;padding:6px 10px">'
+        '<button class="btn" type="submit" style="padding:6px 14px">搜索</button></form>'
+    )
     return (
         "<!doctype html><html lang='zh'><head><meta charset='utf-8'>"
         f"<meta name='viewport' content='width=device-width,initial-scale=1'>"
         f"<title>{html.escape(title)} · AI 财经日报看板</title><style>{CSS}</style></head><body>"
-        f"<header><h1>📊 AI 财经日报看板</h1>{nav}</header><main>{body}</main></body></html>"
+        f"<header><h1>📊 AI 财经日报看板</h1>{nav}{searchbox}</header><main>{body}</main></body></html>"
     )
+
+
+def _int_or_none(v):
+    try:
+        return int(v) if v not in (None, "", "None") else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _hl(text, q):
+    from app.web.readview import highlight
+    return highlight(text, q)
+
 
 
 def _badge(ok: bool, label: str) -> str:
@@ -100,9 +146,10 @@ class WebApp:
         self.trigger_cmd = trigger_cmd or [sys.executable, "run_daily.py", "--test"]
 
     # ── 路由 ───────────────────────────────────────
-    def handle(self, method: str, path: str) -> Response:
+    def handle(self, method: str, path: str, body: bytes = b"") -> Response:
         parsed = urlparse(path)
         route = parsed.path
+        self._post_body = body or b""
         try:
             if method == "GET" and route in ("/", "/index.html"):
                 return self._page_index()
@@ -114,10 +161,26 @@ class WebApp:
                 return Response.text(build_rss(self.store), ctype="application/rss+xml; charset=utf-8")
             if method == "GET" and route == "/atom.xml":
                 return Response.text(build_atom(self.store), ctype="application/atom+xml; charset=utf-8")
+            if method == "GET" and route.startswith("/read/"):
+                return self._page_read(unquote(route[len("/read/"):]))
             if method == "GET" and route.startswith("/report/"):
                 return self._page_report(unquote(route[len("/report/"):]))
             if method == "GET" and route.startswith("/file/"):
                 return self._serve_file(route[len("/file/"):])
+            if method == "GET" and route == "/search":
+                return self._page_search(parsed.query)
+            if method == "GET" and route == "/api/search":
+                return self._api_search(parsed.query)
+            if method == "GET" and route == "/insights":
+                return self._page_insights()
+            if method == "GET" and route == "/my":
+                return self._page_my(parsed.query)
+            if method == "GET" and route == "/subscriptions":
+                return self._page_subscriptions()
+            if method == "POST" and route == "/subscriptions":
+                return self._post_subscriptions()
+            if method == "GET" and route == "/api/subscriptions":
+                return self._api_subscriptions()
             if method == "GET" and route == "/api/reports":
                 return Response.json(self.api_reports())
             if method == "GET" and route == "/api/health":
@@ -125,7 +188,7 @@ class WebApp:
             if method == "GET" and route == "/api/config":
                 return Response.json(self.config_snapshot())
             if method == "POST" and route == "/trigger":
-                return self._trigger()
+                return self._trigger(parsed.query, body)
             return Response.html(_layout("404", "<div class='card'><h2>404</h2><p>页面不存在。</p></div>"), status=404)
         except Exception as e:  # noqa: BLE001 - 看板不因单点错误崩
             return Response.html(
@@ -217,11 +280,16 @@ class WebApp:
                 links.append(f"<a class='btn' href='/file/{latest.date}/{quote(latest.primary_pdf().name)}'>📕 打开 PDF</a>")
             if latest.htmls:
                 links.append(f"<a class='btn' href='/file/{latest.date}/{quote(latest.htmls[0].name)}'>📄 HTML 预览</a>")
-            links.append(f"<a class='btn' href='/report/{latest.date}'>详情</a>")
+            links.append(f"<a class='btn' href='/read/{latest.date}'>📖 在线阅读</a>")
+            links.append(f"<a class='btn' href='/report/{latest.date}'>产物详情</a>")
             cards.append("<p>" + " ".join(links) + "</p>")
         else:
             cards.append("<p>暂无日报，先运行 <code>python run_daily.py --test</code>。</p>")
-        cards.append('<form method="post" action="/trigger" style="margin-top:12px"><button class="btn" type="submit">🚀 后台触发一次出报（测试模式）</button></form>')
+        cards.append(
+            '<form method="post" action="/trigger" style="margin-top:12px;display:flex;gap:10px;align-items:center;flex-wrap:wrap">'
+            '<button class="btn" type="submit" name="mode" value="test">🚀 触发出报（测试·省额度）</button>'
+            '<button class="btn" type="submit" name="mode" value="full" style="background:#2f855a">📦 触发出报（全量·完整）</button>'
+            '<span class="muted">后台运行，进度见 logs/web_trigger.log</span></form>')
         cards.append("</div>")
 
         rows = []
@@ -231,7 +299,7 @@ class WebApp:
             ok = rl.get("success")
             status = _badge(ok is True, "成功" if ok else ("失败" if ok is False else "无runlog"))
             rows.append(
-                f"<tr><td><a href='/report/{art.date}'>{art.date}</a></td>"
+                f"<tr><td><a href='/read/{art.date}'>{art.date}</a></td>"
                 f"<td>{raw.get('total_items','-')}</td><td>{rl.get('elapsed_sec','-')}s</td>"
                 f"<td>{status}</td>"
                 f"<td>{'📕' if art.has_pdf else '—'} {'📄' if art.htmls else ''}</td></tr>"
@@ -249,6 +317,7 @@ class WebApp:
         raw = self.store.load_raw(date) or {}
         rl = self.store.load_runlog(date) or {}
         b = [f"<div class='card'><h2>日报 {html.escape(date)}</h2>"]
+        b.append(f'<p><a class="btn" href="/read/{date}">📖 在线阅读版</a></p>')
         b.append(f"<p class='muted'>report_id: {html.escape(str(raw.get('report_id')))} ｜ 条目 {raw.get('total_items')} ｜ 字数 {raw.get('total_word_count')}</p>")
         for f in sorted(art.dir.iterdir()):
             if f.is_file():
@@ -308,6 +377,223 @@ class WebApp:
         )
         return Response.html(_layout("配置", body))
 
+    # ── T13-A 在线读报 ─────────────────────────────
+    def _page_read(self, date: str, query: str = "", banner: str = "") -> Response:
+        art = self.store.get(date)
+        if not art.has_report:
+            return Response.html(
+                _layout("无日报", f"<div class='card'><h2>{html.escape(date)}</h2><p>该日期无日报数据。</p></div>"),
+                status=404)
+        raw = self.store.load_raw(date) or {}
+        links = [f'<a class="btn" href="/">← 首页</a> <a class="btn" href="/read/{date}">📖 在线阅读</a>']
+        if art.primary_pdf():
+            links.append(f'<a class="btn" href="/file/{date}/{quote(art.primary_pdf().name)}">📕 PDF</a>')
+        if art.htmls:
+            links.append(f'<a class="btn" href="/file/{date}/{quote(art.htmls[0].name)}">📄 原始HTML</a>')
+        links.append(f'<a class="btn" href="/my?date={date}">⭐ 订阅版</a>')
+        head = f"<div class='card'><p>{' '.join(links)}</p></div>"
+        body = head + render_reading_view(raw, date, banner=banner, query=query)
+        return Response.html(_layout(f"日报 {date}", body))
+
+    # ── T13-B 全站情报搜索 ─────────────────────────
+    def _open_db(self):
+        from app.storage.db import DEFAULT_DB_PATH, connect
+        from app.storage.indexer import build_index
+        db_path = self.base_dir / DEFAULT_DB_PATH
+        if not db_path.exists():
+            build_index(str(db_path), str(self.base_dir / "data" / "reports"))
+        return connect(str(db_path))
+
+    def _page_search(self, querystring: str) -> Response:
+        qs = parse_qs(querystring)
+        q = (qs.get("q", [""])[0]).strip()
+        days = _int_or_none(qs.get("days", [None])[0])
+        category = qs.get("category", [""])[0].strip() or None
+        body = ['<div class="card"><h2>🔍 全站情报搜索</h2>']
+        body.append(
+            '<form class="searchbar" action="/search" method="get">'
+            f'<input type="text" name="q" value="{html.escape(q)}" placeholder="公司 / 关键词，如 OpenAI 融资">'
+            '<select name="days"><option value="">全部时间</option>'
+            + "".join(f'<option value="{d}"{" selected" if days==d else ""}>近 {d} 天</option>'
+                      for d in (7, 30, 90, 180))
+            + '</select>'
+            '<button class="btn" type="submit">搜索</button></form>')
+        if not q:
+            body.append('<p class="muted">输入关键词检索全部历史日报（标题 / 正文 / 点评 / 公司名）。</p></div>')
+            return Response.html(_layout("搜索", "".join(body)))
+        try:
+            from app.storage.query import search_conn
+            conn = self._open_db()
+            try:
+                rows = search_conn(conn, keyword=q, days=days, category=category)
+            finally:
+                conn.close()
+        except Exception as e:  # noqa: BLE001
+            body.append(f'<p>搜索失败：{html.escape(str(e))}</p></div>')
+            return Response.html(_layout("搜索", "".join(body)), status=500)
+        body.append(f'<p class="muted">「{html.escape(q)}」命中 {len(rows)} 条</p></div>')
+        if not rows:
+            body.append('<div class="card"><p>没有匹配条目。换个关键词，或先用 <code>python main.py index build</code> 建库。</p></div>')
+        else:
+            body.append('<div class="card"><table><tr><th>日期</th><th>栏目</th><th>重要度</th><th>标题</th></tr>')
+            for r in rows:
+                comp = "、".join((r.get("companies") or [])[:3])
+                comp_s = f' <span class="muted">[{html.escape(comp)}]</span>' if comp else ""
+                body.append(
+                    f'<tr><td><a href="/read/{r["date"]}">{r["date"]}</a></td>'
+                    f'<td>{html.escape(r.get("section_name") or "")}</td>'
+                    f'<td>{r.get("importance", "-")}</td>'
+                    f'<td><a href="/read/{r["date"]}">{_hl(r.get("title"), q)}</a>{comp_s}</td></tr>')
+            body.append("</table></div>")
+        return Response.html(_layout(f"搜索：{q}", "".join(body)))
+
+    def _api_search(self, querystring: str) -> Response:
+        qs = parse_qs(querystring)
+        q = (qs.get("q", [""])[0]).strip()
+        if not q:
+            return Response.json({"error": "缺少 q 参数"}, status=400)
+        days = _int_or_none(qs.get("days", [None])[0])
+        category = qs.get("category", [""])[0].strip() or None
+        from app.storage.query import search_conn
+        conn = self._open_db()
+        try:
+            rows = search_conn(conn, keyword=q, days=days, category=category)
+        finally:
+            conn.close()
+        return Response.json({"query": q, "count": len(rows), "results": rows})
+
+    # ── T13-C 趋势洞察 ─────────────────────────────
+    def _page_insights(self) -> Response:
+        from app.storage.trend import funding_hotspots, headline_diff, topic_heat
+        try:
+            conn = self._open_db()
+        except Exception as e:  # noqa: BLE001
+            return Response.html(_layout("洞察", f"<div class='card'><h2>📈 趋势洞察</h2><p>情报库不可用：{html.escape(str(e))}</p><p class='muted'>运行 <code>python main.py index build</code> 后重试。</p></div>"))
+        b = ['<div class="card"><h2>📈 趋势洞察</h2><p class="muted">基于全部已索引日报聚合。</p></div>']
+        try:
+            from app.storage.db import stats_overview
+            s = stats_overview(conn)
+            # 栏目分布条形图
+            b.append('<div class="card"><h2>📰 栏目分布</h2>')
+            sections = sorted(s.get("by_section", []), key=lambda x: x["n"], reverse=True)
+            mx = max((x["n"] for x in sections), default=1) or 1
+            for sec in sections:
+                w = max(2, int(sec["n"] / mx * 220))
+                b.append(f'<div class="bar-row"><span class="lbl">{html.escape(sec["section_name"])}</span>'
+                         f'<span class="bar" style="width:{w}px"></span><span class="num">{sec["n"]}</span></div>')
+            b.append("</div>")
+            # 公司 TOP
+            b.append('<div class="card"><h2>🏢 高频公司 / 机构 TOP 15</h2><p>')
+            for c in (s.get("top_companies") or [])[:15]:
+                b.append(f'<span class="tag">{html.escape(c["name"])} · {c["mentions"]}次/{c["days"]}天</span> ')
+            b.append("</p></div>")
+            # 融资热点
+            fh = funding_hotspots(conn, weeks=8, top=12)
+            if fh:
+                b.append('<div class="card"><h2>💰 近 8 周融资热点</h2><table><tr><th>公司</th><th>提及</th><th>活跃天数</th></tr>')
+                for f in fh:
+                    b.append(f'<tr><td>{html.escape(f["company"])}</td><td>{f["count"]}</td><td>{f["days"]}</td></tr>')
+                b.append("</table></div>")
+            # 头条差异
+            hd = headline_diff(conn)
+            b.append('<div class="card"><h2>🔄 今日头条周报</h2>')
+            b.append(f'<p class="muted">本周（{hd.get("week_start","-")}）vs 上周（{hd.get("last_week_start","-")}）</p>')
+            b.append(f'<p><strong>🆕 本周新增（{len(hd.get("added",[]))}）</strong></p><ul>')
+            for r in hd.get("added", [])[:10]:
+                b.append(f'<li>[{r["date"]}] {html.escape(r["title"])}</li>')
+            b.append("</ul>")
+            b.append(f'<p><strong>📉 上周淡出（{len(hd.get("dropped",[]))}）</strong></p><ul>')
+            for r in hd.get("dropped", [])[:10]:
+                b.append(f'<li>[{r["date"]}] {html.escape(r["title"])}</li>')
+            b.append("</ul></div>")
+            # 话题热度（纯 CSS 柱状，近 8 周总条目）
+            heat = topic_heat(conn, weeks=8)
+            if heat:
+                cols = list(heat.values())
+                totals = [(c["week_start"], sum(c["topics"].values())) for c in cols]
+                hmax = max((t for _, t in totals), default=1) or 1
+                b.append('<div class="card"><h2>📊 近 8 周出报量</h2><div class="heat">')
+                for ws, t in totals:
+                    h = max(3, int(t / hmax * 56))
+                    b.append(f'<div class="col" style="height:{h}px" title="{ws}: {t}条"></div>')
+                b.append("</div><p class='muted'>" + " · ".join(f"{ws[5:]}:{t}" for ws, t in totals) + "</p></div>")
+        finally:
+            conn.close()
+        return Response.html(_layout("趋势洞察", "".join(b)))
+
+    # ── T13-D 我的订阅 / 个性化 ─────────────────────
+    def _sub_store(self):
+        from app.personalization.store import SubscriptionStore
+        return SubscriptionStore(self.base_dir / "data" / "subscriptions")
+
+    def _page_my(self, querystring: str) -> Response:
+        from app.personalization.filter import filter_report
+        qs = parse_qs(querystring)
+        user = qs.get("user", ["default"])[0]
+        date = qs.get("date", [None])[0]
+        sub = self._sub_store().get(user)
+        art = self.store.find_on_date(date) if date else self.store.latest_or_today()
+        if art is None:
+            return Response.html(_layout("我的订阅", "<div class='card'><h2>⭐ 我的订阅</h2><p>暂无日报。</p></div>"))
+        report = self.store.load_report(art.date)
+        if report is None:
+            return Response.html(_layout("我的订阅", "<div class='card'><p>日报数据无法解析。</p></div>"), status=500)
+        if not sub.companies and not sub.categories:
+            banner = "你还没有设置订阅条件，下面是完整日报。到「我的订阅」页添加关注公司/栏目即可得到定制版。"
+            filtered = report
+        else:
+            scope = "、".join(sub.companies + sub.categories)
+            banner = f"📌 订阅版（{user}）｜关注：{scope}"
+            filtered = filter_report(report, sub.companies, sub.categories, user=user)
+        raw = filtered.model_dump()
+        body = (f"<div class='card'><p><a class='btn' href='/subscriptions'>⚙️ 管理订阅</a> "
+                f"<a class='btn' href='/read/{art.date}'>看完整版</a></p></div>")
+        body += render_reading_view(raw, art.date, banner=banner)
+        return Response.html(_layout(f"我的订阅 {art.date}", body))
+
+    def _page_subscriptions(self) -> Response:
+        store = self._sub_store()
+        subs = list((self.base_dir / "data" / "subscriptions").glob("*.yaml")) if (self.base_dir / "data" / "subscriptions").exists() else []
+        b = ['<div class="card"><h2>⭐ 订阅管理</h2>']
+        if subs:
+            b.append("<p>已有订阅：</p><ul>")
+            for f in sorted(subs):
+                s = store.get(f.stem)
+                b.append(f'<li><strong>{html.escape(s.name)}</strong>：公司={html.escape("、".join(s.companies) or "—")} ｜ 栏目={html.escape("、".join(s.categories) or "—")}</li>')
+            b.append("</ul>")
+        b.append(
+            '<form class="sub-form" method="post" action="/subscriptions">'
+            '<p>订阅名（默认 default）：<input type="text" name="name" value="default"></p>'
+            '<p>关注公司（逗号分隔，如 OpenAI,Anthropic,英伟达）：<br><input type="text" name="companies" size="60"></p>'
+            '<p>关注栏目（栏目 id，逗号分隔）：<br><input type="text" name="categories" size="60" placeholder="top_news,funding,model_tech,policy,research,industry,us_stocks"></p>'
+            '<button class="btn" type="submit">保存订阅</button></form>')
+        b.append('<p class="muted">保存后到 <a href="/my">⭐ 我的订阅</a> 查看个性化日报。</p></div>')
+        return Response.html(_layout("订阅管理", "".join(b)))
+
+    def _post_subscriptions(self) -> Response:
+        from app.personalization.store import Subscription
+        form = self._post_body.decode("utf-8", "ignore")
+        data = parse_qs(form)
+        name = (data.get("name", ["default"])[0] or "default").strip() or "default"
+        companies = [c.strip() for c in (data.get("companies", [""])[0]).split(",") if c.strip()]
+        categories = [c.strip() for c in (data.get("categories", [""])[0]).split(",") if c.strip()]
+        self._sub_store().save(Subscription(name=name, companies=companies, categories=categories))
+        body = (f'<div class="card"><h2>✅ 订阅已保存</h2><p>订阅 <strong>{html.escape(name)}</strong>：'
+                f'公司 {html.escape("、".join(companies) or "—")} ｜ 栏目 {html.escape("、".join(categories) or "—")}</p>'
+                f'<p><a class="btn" href="/my?user={quote(name)}">查看我的订阅日报 →</a> '
+                f'<a class="btn" href="/subscriptions">返回</a></p></div>')
+        return Response.html(_layout("已保存", body))
+
+    def _api_subscriptions(self) -> Response:
+        d = self.base_dir / "data" / "subscriptions"
+        out = []
+        if d.exists():
+            for f in sorted(d.glob("*.yaml")):
+                s = self._sub_store().get(f.stem)
+                out.append({"name": s.name, "companies": s.companies, "categories": s.categories})
+        return Response.json({"subscriptions": out})
+
+
     # ── 文件下载/预览 ──────────────────────────────
     def _serve_file(self, rel: str) -> Response:
         parts = [p for p in unquote(rel).split("/") if p and p != ".."]
@@ -326,15 +612,24 @@ class WebApp:
         return Response(body=target.read_bytes(), status=200, content_type=ctype)
 
     # ── 后台触发 ───────────────────────────────────
-    def _trigger(self) -> Response:
+    def _trigger(self, querystring: str = "", body: bytes = b"") -> Response:
         try:
+            params = {k: v[0] for k, v in parse_qs(querystring).items()}
+            if body:
+                params.update({k: v[0] for k, v in parse_qs(body.decode("utf-8", "ignore")).items()})
+            mode = params.get("mode", "test")
+            if mode not in ("test", "full"):
+                mode = "test"
+            cmd = [sys.executable, "run_daily.py", "--test" if mode == "test" else "--full"]
             log_dir = self.base_dir / "logs"
             log_dir.mkdir(exist_ok=True)
             logf = open(log_dir / "web_trigger.log", "ab")
-            subprocess.Popen(self.trigger_cmd, cwd=str(self.base_dir), stdout=logf, stderr=logf,
+            subprocess.Popen(cmd, cwd=str(self.base_dir), stdout=logf, stderr=logf,
                              start_new_session=True)
-            return Response.json({"ok": True, "message": "已在后台启动出报（测试模式），详见 logs/web_trigger.log",
-                                  "cmd": self.trigger_cmd})
+            label = "测试模式（省额度）" if mode == "test" else "全量模式（完整出报）"
+            return Response.json({"ok": True, "mode": mode,
+                                  "message": f"已在后台启动出报（{label}），详见 logs/web_trigger.log",
+                                  "cmd": cmd})
         except Exception as e:  # noqa: BLE001
             return Response.json({"ok": False, "error": str(e)}, status=500)
 
@@ -345,7 +640,14 @@ class _Handler(BaseHTTPRequestHandler):
     app: WebApp = None  # 由 serve 注入
 
     def _do(self, method: str) -> None:
-        resp = self.app.handle(method, self.path)
+        body = b""
+        if method == "POST":
+            try:
+                length = int(self.headers.get("Content-Length", 0) or 0)
+                body = self.rfile.read(length) if length else b""
+            except (ValueError, TypeError):
+                body = b""
+        resp = self.app.handle(method, self.path, body=body)
         self.send_response(resp.status)
         self.send_header("Content-Type", resp.content_type)
         self.send_header("Content-Length", str(len(resp.body)))
