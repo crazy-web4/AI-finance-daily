@@ -77,6 +77,26 @@ class TestDbIndexer(unittest.TestCase):
         self.assertFalse(ok)
         conn.close()
 
+    def test_reindex_same_date_does_not_corrupt_fts(self):
+        # 回归：items_fts 早期为 contentless FTS5，同日重索引 DELETE 会抛
+        # "cannot DELETE from contentless fts5 table"。建库后同日再索引必须成功且不翻倍。
+        build_index(self.db, self.reports, rebuild=True)
+        conn = connect(self.db)
+        init_db(conn)  # 触发潜在迁移
+        store = ReportStore(self.reports)
+        ok, n, err = index_one_date(conn, store, "2026-09-01")
+        self.assertTrue(ok, err)
+        total = conn.execute("SELECT COUNT(*) c FROM items").fetchone()["c"]
+        fts_total = conn.execute("SELECT COUNT(*) c FROM items_fts").fetchone()["c"]
+        # 重索引该日不应产生重复（两期数据量一致：每个 item 一条 fts）
+        self.assertEqual(total, fts_total)
+        # 当日条目仍可被 FTS 检索
+        hit = conn.execute(
+            "SELECT COUNT(*) c FROM items_fts f JOIN items i ON i.id=f.rowid WHERE items_fts MATCH 'OpenAI'"
+        ).fetchone()["c"]
+        self.assertGreaterEqual(hit, 1)
+        conn.close()
+
 
 if __name__ == "__main__":
     unittest.main()

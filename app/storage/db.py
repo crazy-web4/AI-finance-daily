@@ -57,7 +57,7 @@ CREATE INDEX IF NOT EXISTS idx_items_section ON items(section_id);
 
 CREATE VIRTUAL TABLE IF NOT EXISTS items_fts USING fts5(
     title, details, analysis,
-    content='', tokenize='unicode61'
+    tokenize='unicode61'
 );
 
 CREATE TABLE IF NOT EXISTS entities (
@@ -87,7 +87,29 @@ def connect(db_path: str | Path = DEFAULT_DB_PATH) -> sqlite3.Connection:
 def init_db(conn: sqlite3.Connection) -> None:
     """创建表与索引（幂等）。"""
     conn.executescript(_SCHEMA)
+    _migrate_fts(conn)
     conn.commit()
+
+
+def _migrate_fts(conn: sqlite3.Connection) -> None:
+    """
+    早期版本把 items_fts 建成 contentless FTS5（content=''），该形态不支持
+    按 rowid DELETE，导致同一日期重索引（先清旧再写）失败回滚。
+    检测到旧表则 DROP 重建为自带内容的 FTS5，并从 items 回填索引数据。
+    """
+    row = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE name='items_fts'"
+    ).fetchone()
+    if row and row["sql"] and "content=''" in row["sql"]:
+        conn.execute("DROP TABLE IF EXISTS items_fts")
+        conn.execute(
+            "CREATE VIRTUAL TABLE items_fts USING fts5("
+            "title, details, analysis, tokenize='unicode61')"
+        )
+        conn.execute(
+            "INSERT INTO items_fts (rowid, title, details, analysis) "
+            "SELECT id, title, details, analysis FROM items"
+        )
 
 
 def _importance(section_id: str, rank: int) -> int:
