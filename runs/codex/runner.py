@@ -82,14 +82,15 @@ def run_one(state: dict, tid: str) -> bool:
 
     cmd = [
         CODEX, "exec",
-        "--sandbox", "workspace-write",
-        "--approve-for-me",
+        "--approve-for-me",   # 隐含 workspace-write 沙箱；不可与 --sandbox 同用
         "--cd", str(ROOT),
         "--output-last-message", str(logf),
         prompt_file.read_text(encoding="utf-8"),
     ]
     try:
-        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=3600 * 4)
+        # stdin=DEVNULL 是关键：codex exec 在 stdin 未关闭时会阻塞等待额外输入
+        proc = subprocess.run(cmd, capture_output=True, text=True,
+                              stdin=subprocess.DEVNULL, timeout=3600 * 4)
         with logf.open("a", encoding="utf-8") as f:
             f.write("\n=== CODEX STDOUT (tail) ===\n" + proc.stdout[-3000:] + "\n")
             f.write("=== CODEX STDERR (tail) ===\n" + proc.stderr[-2000:] + "\n")
