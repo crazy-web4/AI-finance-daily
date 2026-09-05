@@ -463,6 +463,27 @@ def post_report_steps(report, today: str, rr):
     except Exception as e:  # noqa: BLE001
         rr.flag(f"情报库索引异常: {type(e).__name__}: {e}")
 
+    # ── 订阅推送（best-effort，失败不影响出报；DIGEST_PUSH=1 启用）──
+    if os.environ.get("DIGEST_PUSH", "").lower() in ("1", "true", "yes"):
+        try:
+            from app.personalization.digest import push_all
+            base_url = os.environ.get("DIGEST_BASE_URL", "")
+            results = push_all(report, base_url=base_url)
+            pushed = [r for r in results if r.ok]
+            skipped = [r for r in results if r.items == 0]
+            for r in results:
+                if r.channels and not r.ok:
+                    rr.flag(f"订阅推送失败({r.user}): {'; '.join(r.errors)}")
+            rr.set("digest", {"subs": len(results), "pushed": len(pushed),
+                              "empty": len(skipped)})
+            print(f"  📬 订阅推送: {len(pushed)}/{len(results)} 个订阅已送达"
+                  f"（{len(skipped)} 无命中跳过）", flush=True)
+        except Exception as e:  # noqa: BLE001
+            rr.flag(f"订阅推送异常: {type(e).__name__}: {e}")
+    else:
+        print("  📬 订阅推送: 未启用（设置环境变量 DIGEST_PUSH=1 开启）", flush=True)
+
+
 
 def init_system():
     """初始化系统"""
@@ -517,6 +538,7 @@ async def main():
     parser.add_argument("--queries-per-batch", type=int, default=0, help="每批次最多查询数(0=全部)")
     parser.add_argument("--tavily-n", type=int, default=20, help="Tavily补充查询数")
     parser.add_argument("--no-monitoring", action="store_true", help="禁用性能监控")
+    parser.add_argument("--push-digest", action="store_true", help="出报后向订阅推送个性化摘要（webhook/邮件）")
     args = parser.parse_args()
 
     # 初始化系统

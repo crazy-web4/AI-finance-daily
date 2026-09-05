@@ -318,6 +318,30 @@ def cmd_subscribe(args) -> None:
     print("用法: --add \"公司A,公司B\" --categories funding,policy ｜ --list ｜ --remove \"公司A\"")
 
 
+def cmd_digest(args) -> None:
+    """对指定日期（默认最新）日报，按订阅推送个性化摘要（best-effort）。"""
+    store, date = _resolve_date(args.date)
+    report = store.load_report(date)
+    if report is None:
+        print(f"❌ 无法解析 {date} 的日报 JSON")
+        sys.exit(1)
+    from app.personalization.digest import push_all
+    webhook = os.environ.get("ALERT_WEBHOOK_URL", "")
+    base_url = args.base_url or os.environ.get("DIGEST_BASE_URL", "")
+    results = push_all(report, base_url=base_url, webhook_url=webhook)
+    if not results:
+        print("ℹ️  无任何订阅（用 main.py subscribe --add 添加，或在看板 /subscriptions 配置）")
+        return
+    for r in results:
+        if r.ok:
+            print(f"  ✅ {r.name if hasattr(r,'name') else r.user}: 命中 {r.items} 条 → 通道 {', '.join(r.channels)}")
+        elif r.items == 0:
+            print(f"  ⏭️  {r.user}: 当日无命中，跳过")
+        else:
+            print(f"  ❌ {r.user}: 推送失败 {'; '.join(r.errors) or '(未配置通道)'}")
+    print(f"完成：{sum(1 for r in results if r.ok)}/{len(results)} 个订阅已推送")
+
+
 def main() -> None:
     p = argparse.ArgumentParser(description="AI 财经日报")
     sub = p.add_subparsers(dest="command", required=True)
@@ -381,6 +405,11 @@ def main() -> None:
 
     pwat = sub.add_parser("watch", help="异常告警巡检")
     pwat.add_argument("--dry-run", action="store_true"); pwat.set_defaults(func=cmd_watch)
+
+    pdg = sub.add_parser("digest", help="按订阅推送个性化摘要（webhook/邮件）")
+    pdg.add_argument("--date")
+    pdg.add_argument("--base-url", dest="base_url", help="摘要里回到看板的链接，如 http://127.0.0.1:8910")
+    pdg.set_defaults(func=cmd_digest)
 
     psub = sub.add_parser("subscribe", help="订阅与个性化")
     psub.add_argument("--name", default="default")

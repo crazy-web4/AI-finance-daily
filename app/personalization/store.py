@@ -20,10 +20,13 @@ class Subscription:
     companies: list[str] = field(default_factory=list)
     categories: list[str] = field(default_factory=list)
     note: str = ""
+    webhook: str = ""
+    emails: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return {"name": self.name, "companies": self.companies,
-                "categories": self.categories, "note": self.note}
+                "categories": self.categories, "note": self.note,
+                "webhook": self.webhook, "emails": self.emails}
 
     @classmethod
     def from_dict(cls, d: dict[str, Any], name: str = DEFAULT_USER) -> "Subscription":
@@ -32,6 +35,8 @@ class Subscription:
             companies=list(d.get("companies", []) or []),
             categories=list(d.get("categories", []) or []),
             note=d.get("note", ""),
+            webhook=d.get("webhook", "") or "",
+            emails=list(d.get("emails", []) or []),
         )
 
 
