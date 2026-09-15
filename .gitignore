@@ -24,3 +24,8 @@ runs/codex/*/
 /*研究报告_*.html
 /*事实核查备忘录_*.md
 /*财报日历_*.md
+
+# 根目录工作笔记/方案/手册类 md（仅本地，保留 README.md 与 AGENTS.md）
+/*.md
+!/README.md
+!/AGENTS.md
