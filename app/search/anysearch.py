@@ -247,9 +247,12 @@ def _extract_published_date(url: str, text: str) -> datetime | None:
             dt = _safe_date(int(m.group(2)), mon, 1)
             if dt:
                 month_candidates.append(dt)
-    stale_cut = now.replace(tzinfo=None) - timedelta(days=35)
+    # 第四轮 T30: 月级信号——"当前自然月之前"即视为旧闻（原 35 天容忍放行
+    # 了数周前旧闻）；当月汇总保留，避免误杀月度综述。
+    now_naive = now.replace(tzinfo=None)
+    cur_month = (now_naive.year, now_naive.month)
     for dt in sorted(month_candidates, reverse=True):
-        if dt < stale_cut:
+        if (dt.year, dt.month) != cur_month:
             return dt.replace(tzinfo=timezone.utc)
     return None
 

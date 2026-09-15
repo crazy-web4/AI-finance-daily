@@ -76,21 +76,27 @@ class PDFRenderer:
             wm_text = self.config.watermark_text + " " + report.report_date.replace("-", ".")
             import html as _html
             wm_escaped = _html.escape(wm_text)
+            # SVG 尺寸加大到 A4 对角线级，确保旋转后文字不被截断
+            # A4 约 595x842pt，对角线 ~1030pt，设 1200x1200 留足余量
             svg_parts = [
                 "data:image/svg+xml;utf8,",
-                "<svg xmlns='http://www.w3.org/2000/svg' width='600' height='800'>",
-                "<text x='300' y='420' font-family='Noto Serif SC, serif' ",
-                "font-size='72' font-weight='700' ",
-                "fill='rgba(180,150,120,0.10)' ",
-                "text-anchor='middle' transform='rotate(-35 300 420)'>",
+                "<svg xmlns='http://www.w3.org/2000/svg' width='1200' height='1200' viewBox='0 0 1200 1200'>",
+                "<text x='600' y='600' font-family='Noto Serif SC, serif' ",
+                "font-size='36' font-weight='700' ",
+                "fill='rgba(140,110,80,0.18)' ",
+                "text-anchor='middle' dominant-baseline='middle' transform='rotate(-35 600 600)'>",
                 wm_escaped,
                 "</text></svg>",
             ]
             svg = "".join(svg_parts)
             wm_css_lines = [
-                "background-image: url('" + svg + "');",
-                "  background-repeat: repeat;",
-                "  background-attachment: fixed;",
+                "}",
+                "",
+                "@page {",
+                "  background-image: url('" + svg + "');",
+                "  background-repeat: no-repeat;",
+                "  background-position: center center;",
+                "  background-size: 70% 70%;",
             ]
             wm_css = "\n".join(wm_css_lines)
             css = css.replace("/* __WATERMARK_SVG__ */", wm_css)
@@ -134,7 +140,7 @@ class PDFRenderer:
             "subtitle_tags": self.config.subtitle_tags,
             "report_date": report.report_date,
             "report_date_cn": self._format_date_cn(report.report_date),
-            "watermark_text": f"{self.config.watermark_text} {report.report_date.replace("-", ".")}",
+            "watermark_text": self.config.watermark_text + " " + report.report_date.replace("-", "."),
             "sections": sections,
             "editor_summary": self._render_paragraphs(safe_render_clean(report.editor_summary)) if report.editor_summary else None,
         }

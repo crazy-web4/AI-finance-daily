@@ -4,8 +4,28 @@ __pycache__/
 *.pyc
 .idea/
 *.pdf
+.venv/
+venv/
 
 # 运行时/缓存/系统文件
 .DS_Store
 logs/
 .firecrawl/
+.preview/
+.workbuddy/
+
+# codex 长任务运行态（保留 runner.py，忽略状态与日志）
+runs/codex/state.json
+runs/codex/*/
+
+# 根目录一次性研究产出
+/*深度调研_*.html
+/*研究报告_*.md
+/*研究报告_*.html
+/*事实核查备忘录_*.md
+/*财报日历_*.md
+
+# 根目录工作笔记/方案/手册类 md（仅本地，保留 README.md 与 AGENTS.md）
+/*.md
+!/README.md
+!/AGENTS.md

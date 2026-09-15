@@ -234,7 +234,7 @@ async def main():
         watermark_text=args.watermark,
         editor_name=args.editor_name,
         wechat_id=args.wechat_id,
-        output_dir=out_dir,
+        output_dir=str(Path(out_dir).parent),  # E3: render_pdf 会再拼日期，传父级
         filename_pattern=f"AI行业全球动态日报_{'{date}'}@{args.wechat_id}_美股版.pdf",
     )
     renderer = PDFRenderer(config=config)

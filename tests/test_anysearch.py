@@ -61,6 +61,10 @@ class TestMarkdownParser(unittest.TestCase):
         self.assertIsNotNone(d)  # 明显旧 → 标记
         # 当月 → 保留(None)
         self.assertIsNone(_extract_published_date("https://x.com", f"{now.year}年{now.month}月最新"))
+        # 第四轮 T30: 上一自然月 → 标记为旧
+        prev = (now.replace(day=1) - timedelta(days=1))
+        self.assertIsNotNone(
+            _extract_published_date("https://x.com", f"{prev.year}年{prev.month}月动态回顾"))
 
     def test_flexible_date(self):
         self.assertIsNotNone(_parse_flexible_date("2026-08-19T08:00:00"))
