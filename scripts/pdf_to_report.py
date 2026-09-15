@@ -38,6 +38,22 @@ SECTION_MAP = {
     "市场与产业动态": Category.INDUSTRY,
 }
 
+# 源 PDF 栏目命名在不同日期有变体（09-12 起「学术与研究/产品与市场」，
+# 09-13 起「模型与产品/资本与融资/学术与论文」），统一归一到标准栏目名。
+SECTION_ALIASES = {
+    "今日头条": "今日头条",
+    "模型发布与技术进展": "模型发布与技术进展",
+    "模型与产品": "模型发布与技术进展",
+    "融资与资本动态": "融资与资本动态",
+    "资本与融资": "融资与资本动态",
+    "政策与监管": "政策与监管",
+    "学术与研究突破": "学术与研究突破",
+    "学术与研究": "学术与研究突破",
+    "学术与论文": "学术与研究突破",
+    "市场与产业动态": "市场与产业动态",
+    "产品与市场": "市场与产业动态",
+}
+
 NS = {"xhtml": "http://www.w3.org/1999/xhtml"}
 
 # 正文区域（A4 页面内）
@@ -310,13 +326,14 @@ def is_section_header(line: dict) -> tuple[bool, str]:
     if not m:
         return False, ""
     raw_name = m.group(1).strip()
-    # 精确匹配优先
-    if raw_name in SECTION_MAP:
-        return True, raw_name
-    # 容错匹配: 从 SECTION_MAP 中找前缀匹配的（末尾有水印噪声）
-    for name in SECTION_MAP:
-        if raw_name.startswith(name):
-            return True, name
+    # 精确匹配（含别名归一）
+    canonical = SECTION_ALIASES.get(raw_name)
+    if canonical:
+        return True, canonical
+    # 容错匹配: 末尾可能带水印噪声，按别名/标准名做前缀匹配
+    for alias_name, canon in SECTION_ALIASES.items():
+        if raw_name.startswith(alias_name):
+            return True, canon
     return False, ""
 
 
